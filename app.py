@@ -176,34 +176,80 @@ if menu == "📊 Dashboard":
     st.dataframe(urunler_df.tail(10), use_container_width=True, hide_index=True)
 
 elif menu == "➕ Ürün Yönetimi":
-    st.subheader("➕ Yeni Ürün Kayıt Formu")
-    st.info("Buradan eklediğiniz ürünler anında Google E-Tablo'ya yazılır.")
+    st.subheader("🚀 Toplu Ürün Giriş Paneli")
     
-    with st.form("yeni_urun_form", clear_on_submit=True):
-        col1, col2 = st.columns(2)
-        with col1:
-            stok = st.text_input("Stok Kodu (SKU)*", placeholder="Örn: BIKO-101")
-            ad = st.text_input("Ürün Adı*", placeholder="Örn: Pro Plan Somonlu 12kg")
-            marka = st.text_input("Marka", placeholder="Örn: Pro Plan")
-        with col2:
-            kat = st.selectbox("Kategori", ["Kuru Mama", "Yaş Mama", "Ödül Maması", "Kum", "Aksesuar", "Ek Takviye"])
-            alis = st.number_input("Alış Fiyatı (KDV Dahil)", min_value=0.0, step=0.01)
-            desi = st.number_input("Desi Değeri", min_value=0.0, step=0.1)
-            kdv_orani = st.selectbox("KDV Oranı (%)", [20, 10, 1], index=0)
+    # --- AYARLAR ---
+    with st.expander("🛠️ Giriş Ayarları (Marka & Kategori Sabitle)", expanded=True):
+        c1, c2, c3 = st.columns(3)
+        sabit_marka = c1.text_input("Sabit Marka", placeholder="Örn: Pro Plan")
+        sabit_kat = c2.selectbox("Sabit Kategori", ["Kuru Mama", "Yaş Mama", "Ödül Maması", "Kum", "Aksesuar", "Ek Takviye"])
+        sabit_kdv = c3.selectbox("Sabit KDV (%)", [20, 10, 1], index=0)
+
+    st.markdown("---")
+    
+    # --- VERİ GİRİŞİ ---
+    st.write("### 📋 Excel'den Kopyala / Yapıştır")
+    st.caption("Excel'den 'Stok Kodu', 'Ürün Adı', 'Desi' ve 'Alış Fiyatı' sütunlarını seçip buraya yapıştırın.")
+    
+    yapistirilan_veri = st.text_area("Verileri buraya yapıştırın (Her satır yeni bir ürün olmalı)", height=200)
+
+    if yapistirilan_veri:
+        # Veriyi satırlara ve sütunlara bölme (Tab veya Boşluk duyarlı)
+        satirlar = yapistirilan_veri.strip().split('\n')
+        islenmis_liste = []
         
-        submit = st.form_submit_button("Ürünü Kaydet ve Google Tablo'ya Yaz 🚀")
+        for satir in satirlar:
+            # Excel genelde veriyi TAB (\t) ile ayırır
+            sutunlar = satir.split('\t')
+            if len(sutunlar) >= 2: # En az Stok Kodu ve İsim olmalı
+                sku = sutunlar[0].strip()
+                isim = sutunlar[1].strip()
+                desi = sutunlar[2].strip() if len(sutunlar) > 2 else "0"
+                alis = sutunlar[3].strip() if len(sutunlar) > 3 else "0"
+                
+                islenmis_liste.append({
+                    "Stok Kodu": sku,
+                    "Ürün Adı": isim,
+                    "Marka": sabit_marka,
+                    "Kategori": sabit_kat,
+                    "Desi": desi,
+                    "Alış Fiyatı": alis,
+                    "KDV": sabit_kdv
+                })
         
-        if submit:
-            if not stok or not ad:
-                st.warning("⚠️ Lütfen Stok Kodu ve Ürün Adı alanlarını doldurun.")
+        preview_df = pd.DataFrame(islenmis_liste)
+        st.write("#### 🔍 Kayıt Öncesi Önizleme")
+        st.table(preview_df)
+        
+        if st.button("🔥 Tüm Listeyi Google Tablo'ya Gönder"):
+            if not sabit_marka:
+                st.error("⚠️ Lütfen önce bir 'Sabit Marka' girin!")
             else:
                 try:
-                    yeni_satir = [stok, marka, ad, kat, desi, alis, kdv_orani]
-                    urunler_sheet.append_row(yeni_satir)
-                    st.success(f"✅ Başarılı: '{ad}' ürünü Google E-Tablolar'a eklendi!")
-                    st.cache_resource.clear() # Veriyi yenilemek için cache temizle
+                    with st.spinner("Veriler aktarılıyor, lütfen bekleyin..."):
+                        hazir_satirlar = []
+                        for item in islenmis_liste:
+                            # Google Tablo formatına uygun liste dizisi hazırlama
+                            hazir_satirlar.append([
+                                item["Stok Kodu"], 
+                                item["Marka"], 
+                                item["Ürün Adı"], 
+                                item["Kategori"], 
+                                sayisal_yap(item["Desi"]), 
+                                sayisal_yap(item["Alış Fiyatı"]), 
+                                item["KDV"]
+                            ])
+                        
+                        # Toplu olarak tek seferde ekleme (Çok daha hızlıdır)
+                        urunler_sheet.append_rows(hazir_satirlar)
+                        st.success(f"✅ Toplam {len(hazir_satirlar)} ürün başarıyla eklendi!")
+                        st.cache_resource.clear()
                 except Exception as e:
-                    st.error(f"❌ Kayıt Hatası: {e}")
+                    st.error(f"❌ Aktarım sırasında hata oluştu: {e}")
+
+    st.markdown("---")
+    st.subheader("🗑️ Mevcut Ürün Listesi")
+    st.dataframe(urunler_df.tail(20), use_container_width=True)
 
 elif menu == "🔍 Ürün Analiz":
     st.subheader("🔍 Detaylı Ürün Kar Analizi")
@@ -318,4 +364,5 @@ elif menu == "⚙️ Veritabanı":
     with tab5: 
         st.write("### Trendyol Kampanya Teklif Verileri")
         st.dataframe(teklif_df, use_container_width=True)
+
 
