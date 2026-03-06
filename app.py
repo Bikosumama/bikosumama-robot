@@ -160,25 +160,54 @@ if urunler_df is not None:
                 st.table(pd.DataFrame(analiz_data))
         else: st.info("👆 Arama yapın.")
 
+    # İŞTE GERİ GELEN KATEGORİ BAZLI TOPLU HESAPLAMA EKRANI
     elif menu == "📊 Toplu Liste":
         st.subheader("📋 Dinamik Toplu Fiyat Listesi")
-        kar_hedefi = st.number_input("Global Hedef Kar Marjı (%)", min_value=0.0, value=20.0, step=0.5)
+        kar_modu = st.radio("Kar Marjı Belirleme Yöntemi:", ["🌍 Tüm Ürünlere Aynı Kar Marjını Uygula", "📁 Kategori Bazlı Kar Marjı Uygula"])
+        
+        kategori_karlari = {}
+        global_kar = 20.0
+        varsayilan_kar = 20.0
+        
+        if kar_modu == "🌍 Tüm Ürünlere Aynı Kar Marjını Uygula":
+            global_kar = st.number_input("Global Hedef Kar Marjı (%)", min_value=0.0, max_value=100.0, value=20.0, step=0.5)
+        else:
+            st.markdown("**Aşağıdan kategorilerinize özel kâr marjlarını belirleyin:**")
+            kategoriler = [k for k in urunler_df['Kategori'].unique() if str(k).strip() != '']
+            for i in range(0, len(kategoriler), 4):
+                cols = st.columns(4)
+                for j in range(4):
+                    if i + j < len(kategoriler):
+                        kat = kategoriler[i + j]
+                        with cols[j]:
+                            kategori_karlari[kat] = st.number_input(f"{kat} (%)", min_value=0.0, max_value=100.0, value=20.0, step=0.5, key=f"kar_{kat}")
+            varsayilan_kar = st.number_input("Kategorisi Boş Olanlar İçin Kar (%)", min_value=0.0, max_value=100.0, value=20.0, step=0.5)
+        
+        st.markdown("---")
+
         if st.button("🚀 Tümünü Hesapla"):
-            with st.spinner('Hesaplanıyor...'):
+            with st.spinner('Tüm ürünler hesaplanıyor, lütfen bekleyin...'):
                 p_yerleri = genel_df['Pazaryeri Adı'].unique()
                 toplu_data = []
-                for _, u in urunler_df.iterrows():
-                    if str(u['Ürün Adı']).strip() == '': continue
-                    satir = {"Stok Kodu": u['Stok Kodu'], "Ürün": u['Ürün Adı'], "Maliyet": u['Alış Fiyatı']}
+                for _, urun in urunler_df.iterrows():
+                    if str(urun['Ürün Adı']).strip() == '': continue
+                    if kar_modu == "🌍 Tüm Ürünlere Aynı Kar Marjını Uygula": aktif_kar = global_kar
+                    else:
+                        kat_ismi = str(urun.get('Kategori', '')).strip()
+                        aktif_kar = kategori_karlari.get(kat_ismi, varsayilan_kar)
+
+                    satir = {"Stok Kodu": urun['Stok Kodu'], "Ürün": urun['Ürün Adı'], "Kategori": urun['Kategori'], "Uygulanan Kar": f"%{aktif_kar}", "Maliyet": urun['Alış Fiyatı']}
                     for pz in p_yerleri:
-                        res = fiyat_hesapla_v4(u['Marka'], u['Kategori'], sayisal_yap(u['Desi']), sayisal_yap(u['Alış Fiyatı']), sayisal_yap(u['KDV Oranı']), pz, kar_hedefi)
-                        satir[pz] = round(res[0], 2) if res[0] > 0 else "Hata"
+                        res_t = fiyat_hesapla_v4(urun['Marka'], urun['Kategori'], sayisal_yap(urun['Desi']), sayisal_yap(urun['Alış Fiyatı']), sayisal_yap(urun['KDV Oranı']), pz, aktif_kar)
+                        satir[pz] = round(res_t[0], 2) if res_t[0] > 0 else "Hata"
                     toplu_data.append(satir)
+                
                 df_toplu = pd.DataFrame(toplu_data)
                 st.dataframe(df_toplu, use_container_width=True)
+                
                 buf = io.BytesIO()
-                with pd.ExcelWriter(buf, engine='xlsxwriter') as wr: df_toplu.to_excel(wr, index=False)
-                st.download_button("📥 Excel İndir", data=buf.getvalue(), file_name="toplu_liste.xlsx")
+                with pd.ExcelWriter(buf, engine='xlsxwriter') as wr: df_toplu.to_excel(wr, index=False, sheet_name='Toplu_Fiyatlar')
+                st.download_button("📥 Sonuçları Excel Olarak İndir", data=buf.getvalue(), file_name="bikosumama_fiyatlar.xlsx", mime="application/vnd.ms-excel")
 
     elif menu == "🎯 Ty Kampanya Simülatörü":
         st.subheader("🎯 Trendyol Fırsat Merkezi Süzgeci")
@@ -215,6 +244,7 @@ if urunler_df is not None:
                     with pd.ExcelWriter(buf, engine='xlsxwriter') as wr: df_analiz.to_excel(wr, index=False, sheet_name='Kampanya_Karari')
                     st.download_button("📥 Onay/Red Listesini Excel İndir", data=buf.getvalue(), file_name="Trendyol_Kampanya_Kararlari.xlsx")
 
+    # VERİTABANI SEKMELERİ TAM KADRO BURADA
     elif menu == "⚙️ Veritabanı":
         st.subheader("⚙️ Veritabanı Görüntüleyici")
         t1, t2, t3, t4, t5 = st.tabs(["Ürünler", "Genel Kurallar", "Özel Kurallar", "Kargo", "🎯 Ty Teklifler"])
