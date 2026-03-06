@@ -6,7 +6,7 @@ import io
 import json
 
 # --- 1. AYARLAR VE GÜVENLİK ---
-st.set_page_config(page_title="bikosumama ERP v2.7", page_icon="🐾", layout="wide")
+st.set_page_config(page_title="bikosumama ERP v2.8", page_icon="🐾", layout="wide")
 
 st.markdown("""
     <style>
@@ -48,18 +48,29 @@ if client:
 else:
     st.stop()
 
+# VİRGÜL SORUNUNU ÇÖZEN YENİ VERİ ÇEKME FONKSİYONU
 def veri_cek(sekme_adi):
     sheet = spreadsheet.worksheet(sekme_adi)
-    df = pd.DataFrame(sheet.get_all_records())
+    data = sheet.get_all_values() # Sayıları değiştirmeden saf metin olarak alır
+    
+    if len(data) > 1:
+        df = pd.DataFrame(data[1:], columns=data[0])
+    elif len(data) == 1:
+        df = pd.DataFrame(columns=data[0])
+    else:
+        df = pd.DataFrame()
+        
     df.columns = df.columns.str.strip()
     return df, sheet
 
+# Tüm Verileri Çekelim
 urunler_df, urunler_sheet = veri_cek("Urunler")
 kargo_df, _ = veri_cek("Kargo_Fiyatlari")
 genel_df, _ = veri_cek("Pazaryeri_Kurallari")
 ozel_df, _ = veri_cek("Ozel_Kurallar")
 teklif_df, _ = veri_cek("Trendyol_Teklifler")
 
+# Sabitler
 try:
     sabitler_raw, _ = veri_cek("Sabitler")
     marka_listesi = sorted([m for m in sabitler_raw['Markalar'].unique() if str(m).strip() != ''])
@@ -106,7 +117,6 @@ def fiyat_hesapla_v6(marka, kategori, desi, alis, kdv, pz_adi, kar_yuzdesi):
     efektif_stopaj = stopaj_oran / (1 + (kdv / 100))
     bolen = 1 - komisyon_oran - efektif_stopaj
     
-    # EĞER KOMİSYON ÇOK YÜKSEKSE BURASI HATA VERİR
     if bolen <= 0: return 0,0,0,0,0,0,0,0,0, "Hata", f"Oran Çok Yüksek (Bölen: {round(bolen,2)})"
 
     def matematik(k_maliyet):
@@ -138,7 +148,7 @@ def kampanya_analiz_motoru(desi, alis, kdv, tf, tk):
     return nktl, nky
 
 # --- 4. ARAYÜZ ---
-st.sidebar.title("🐾 bikosumama ERP v2.7")
+st.sidebar.title("🐾 bikosumama ERP v2.8")
 menu = st.sidebar.radio("MENÜ", ["📊 Dashboard", "➕ Ürün Yönetimi", "🔍 Ürün Analiz", "📊 Toplu Liste", "🎯 Ty Kampanya", "⚙️ Veritabanı"])
 
 if menu == "📊 Dashboard":
@@ -184,7 +194,6 @@ elif menu == "🔍 Ürün Analiz":
                 if res[0] > 0: 
                     analiz.append({"Pazaryeri": pz, "Fiyat": f"{round(res[0],2)} TL", "Kar": f"{round(res[1],2)} TL", "Kom %": f"%{res[8]}", "Kargo": f"{res[2]} TL", "Durum": "✅ Başarılı"})
                 else:
-                    # HATA DURUMUNDA GİZLEMEYİP SEBEBİNİ YAZIYORUZ
                     analiz.append({"Pazaryeri": pz, "Fiyat": "HATA", "Kar": "-", "Kom %": "-", "Kargo": "-", "Durum": f"❌ {res[10]}"})
             
             st.table(pd.DataFrame(analiz))
