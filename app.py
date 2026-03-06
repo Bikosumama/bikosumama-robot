@@ -6,7 +6,7 @@ import io
 import json
 
 # --- 1. AYARLAR VE GÜVENLİK ---
-st.set_page_config(page_title="bikosumama ERP v3.0", page_icon="🐾", layout="wide")
+st.set_page_config(page_title="bikosumama ERP v3.1", page_icon="🐾", layout="wide")
 
 st.markdown("""
     <style>
@@ -49,7 +49,6 @@ if client:
 else:
     st.stop()
 
-# VİRGÜL SORUNUNU ÇÖZEN VERİ ÇEKME FONKSİYONU
 def veri_cek(sekme_adi):
     sheet = spreadsheet.worksheet(sekme_adi)
     data = sheet.get_all_values() 
@@ -64,7 +63,6 @@ def veri_cek(sekme_adi):
     df.columns = df.columns.str.strip()
     return df, sheet
 
-# Tüm Verileri Çekelim
 urunler_df, _ = veri_cek("Urunler")
 kargo_df, _ = veri_cek("Kargo_Fiyatlari")
 genel_df, _ = veri_cek("Pazaryeri_Kurallari")
@@ -128,22 +126,46 @@ def fiyat_hesapla_v6(marka, kategori, desi, alis, kdv, pz_adi, kar_yuzdesi):
     return s_d, k_d, kargo_ucreti_desi, s_d*komisyon_oran, s_d*efektif_stopaj, hizmet, islem, diger, komisyon, "Desi", kaynak
 
 def kampanya_analiz_motoru(desi, alis, kdv, tf, tk):
-    res = fiyat_hesapla_v6("Genel", "Genel", desi, alis, kdv, "Trendyol", 0)
+    # Kargo ücretini desi üzerinden bulalım
+    kargo_ucreti_desi = 0
+    pz_kargo = kargo_df[kargo_df['Pazaryeri Adı'].astype(str).str.strip().str.lower() == 'trendyol']
+    if pz_kargo.empty: pz_kargo = kargo_df[kargo_df['Pazaryeri Adı'].astype(str).str.strip() == 'Genel']
+    for _, row in pz_kargo.iterrows():
+        if sayisal_yap(row.get('Min Desi', 0)) <= desi <= sayisal_yap(row.get('Max Desi', 99)):
+            kargo_ucreti_desi = sayisal_yap(row.get('Kargo Ücreti', 0))
+            break
+
     pz_genel_filt = genel_df[genel_df['Pazaryeri Adı'].astype(str).str.contains("Trendyol", case=False)]
     if pz_genel_filt.empty: return 0, 0
     pz_genel = pz_genel_filt.iloc[0]
+    
     stp_o = sayisal_yap(pz_genel.get('Stopaj Oranı', 0))/100
     hiz, isl, dig = sayisal_yap(pz_genel.get('Platform Hizmet Bedeli', 0)), sayisal_yap(pz_genel.get('İşlem Gideri', 0)), sayisal_yap(pz_genel.get('Diğer Giderler', 0))
+    
+    # Barem kontrolü (Teklif Fiyatı üzerinden doğru kargoyu kesmek için)
+    b1_s = sayisal_yap(pz_genel.get('Barem 1 Sınırı (TL)', 0))
+    b1_k = sayisal_yap(pz_genel.get('Barem 1 Kargo (TL)', 0))
+    b2_s = sayisal_yap(pz_genel.get('Barem 2 Sınırı (TL)', 0))
+    b2_k = sayisal_yap(pz_genel.get('Barem 2 Kargo (TL)', 0))
+
+    uygulanan_kargo = kargo_ucreti_desi
+    if b1_s > 0 and tf <= b1_s: uygulanan_kargo = b1_k
+    elif b2_s > 0 and tf <= b2_s: uygulanan_kargo = b2_k
+
     kom_t = tf * (tk/100)
     stp_t = tf * (stp_o / (1 + (kdv/100)))
-    maliyet = alis + res[2] + hiz + isl + dig + kom_t + stp_t
+    
+    maliyet = alis + uygulanan_kargo + hiz + isl + dig + kom_t + stp_t
     nktl = tf - maliyet
-    nky = (nktl / (maliyet - kom_t - stp_t)) * 100 if (maliyet-kom_t-stp_t) > 0 else 0
+    
+    sabit_maliyet_tabani = alis + uygulanan_kargo + hiz + isl + dig
+    nky = (nktl / sabit_maliyet_tabani) * 100 if sabit_maliyet_tabani > 0 else 0
+    
     return nktl, nky
 
 # --- 4. ARAYÜZ ---
 st.sidebar.title("🐾 bikosumama ERP")
-st.sidebar.caption("Sürüm 3.0 (Kararlı Okuma Modu)")
+st.sidebar.caption("Sürüm 3.1 (Kararlı Okuma Modu)")
 menu = st.sidebar.radio("MENÜ", ["📊 Dashboard", "🔍 Ürün Analiz", "📊 Toplu Liste", "🎯 Ty Kampanya", "⚙️ Veritabanı"])
 
 st.sidebar.markdown("---")
@@ -236,19 +258,41 @@ elif menu == "📊 Toplu Liste":
             with pd.ExcelWriter(buf, engine='xlsxwriter') as wr: df_toplu.to_excel(wr, index=False, sheet_name='Toplu_Fiyatlar')
             st.download_button("📥 Sonuçları Excel Olarak İndir", data=buf.getvalue(), file_name="bikosumama_fiyatlar.xlsx", mime="application/vnd.ms-excel")
 
+# KAMPANYA EKRANI DÜZELTİLDİ: Teklif 1, 2, 3 kontrol ediliyor ve Barem hesabı düzeltildi!
 elif menu == "🎯 Ty Kampanya":
-    st.subheader("🎯 Trendyol Süzgeci")
-    minkar = st.number_input("Min Kar %", value=10.0, step=0.5)
-    if st.button("🚀 Çalıştır"):
-        results = []
-        for _, t in teklif_df.iterrows():
-            u = urunler_df[urunler_df['Stok Kodu'].astype(str) == str(t['Stok Kodu'])]
-            if not u.empty:
-                u = u.iloc[0]
-                tf, tk = sayisal_yap(t.get('Teklif 1 Fiyat')), sayisal_yap(t.get('Teklif 1 Komisyon'))
-                ktl, ky = kampanya_analiz_motoru(sayisal_yap(u['Desi']), sayisal_yap(u['Alış Fiyatı']), sayisal_yap(u['KDV Oranı']), tf, tk)
-                results.append({"SKU": t['Stok Kodu'], "Ürün": u['Ürün Adı'], "Teklif Karı": f"%{round(ky,1)}", "Karar": "✅" if ky >= minkar else "❌"})
-        st.dataframe(pd.DataFrame(results), use_container_width=True)
+    st.subheader("🎯 Trendyol Kampanya Süzgeci")
+    minkar = st.number_input("Minimum Kabul Edilebilir Kar (%)", value=10.0, step=0.5)
+    
+    if st.button("🚀 Süzgeçten Geçir"):
+        with st.spinner("Kampanya teklifleri analiz ediliyor..."):
+            results = []
+            for _, t in teklif_df.iterrows():
+                stok = str(t.get('Stok Kodu', '')).strip()
+                if not stok: continue
+                
+                eslesen = urunler_df[urunler_df['Stok Kodu'].astype(str).str.strip() == stok]
+                if not eslesen.empty:
+                    u = eslesen.iloc[0]
+                    satir = {"SKU": stok, "Ürün": u['Ürün Adı']}
+                    
+                    # 3 farklı teklif sütununu tarar
+                    for i in range(1, 4):
+                        tf = sayisal_yap(t.get(f'Teklif {i} Fiyat', 0))
+                        tk = sayisal_yap(t.get(f'Teklif {i} Komisyon', 0))
+                        
+                        if tf > 0:
+                            ktl, ky = kampanya_analiz_motoru(sayisal_yap(u['Desi']), sayisal_yap(u['Alış Fiyatı']), sayisal_yap(u['KDV Oranı']), tf, tk)
+                            satir[f"T{i} Fiyat"] = f"{tf} TL"
+                            satir[f"T{i} Durum"] = f"✅ %{round(ky,1)}" if ky >= minkar else f"❌ %{round(ky,1)}"
+                        else:
+                            satir[f"T{i} Fiyat"] = "-"
+                            satir[f"T{i} Durum"] = "-"
+                    results.append(satir)
+            
+            if results:
+                st.dataframe(pd.DataFrame(results), use_container_width=True)
+            else:
+                st.warning("Eşleşen ürün veya geçerli teklif bulunamadı.")
 
 elif menu == "⚙️ Veritabanı":
     st.subheader("⚙️ Veritabanı (Google Sheets'ten Gelen Ham Veriler)")
