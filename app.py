@@ -5,6 +5,35 @@ import io
 
 # --- 1. SAYFA AYARLARI ---
 st.set_page_config(page_title="bikosumama Fiyat Robotu", page_icon="🐾", layout="wide")
+
+# --- 🔒 ŞİFRE KORUMA SİSTEMİ ---
+# Aşağıdaki tırnak içindeki şifreyi dilediğin gibi değiştirebilirsin!
+GIZLI_SIFRE = "biko2026"
+
+if "giris_yapildi" not in st.session_state:
+    st.session_state.giris_yapildi = False
+
+if not st.session_state.giris_yapildi:
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.title("🔒 Güvenli Giriş")
+        st.markdown("---")
+        st.warning("Bu panele sadece yetkili personel erişebilir. Lütfen şifrenizi girin.")
+        
+        girilen_sifre = st.text_input("Yönetici Şifresi:", type="password")
+        
+        if st.button("Giriş Yap 🚀"):
+            if girilen_sifre == GIZLI_SIFRE:
+                st.session_state.giris_yapildi = True
+                st.rerun()
+            else:
+                st.error("❌ Hatalı şifre! Lütfen tekrar deneyin.")
+    
+    # Şifre doğru girilmediği sürece aşağıdaki kodların çalışmasını tamamen durdurur:
+    st.stop()
+
+
+# --- BUNDAN SONRASI BİZİM ORİJİNAL ROBOTUMUZ ---
 st.title("🤖 bikosumama | Gelişmiş Fiyatlandırma Paneli")
 st.markdown("---")
 
@@ -92,6 +121,12 @@ def fiyat_hesapla_v4(marka, kategori, desi, alis, kdv, pz_adi, kar_yuzdesi):
 if urunler_df is not None:
     menu = st.sidebar.radio("MENÜ", ["🔍 Ürün Arama & Analiz", "📊 Toplu Liste", "⚙️ Veritabanı"])
 
+    # YAN MENÜYE GÜVENLİ ÇIKIŞ BUTONU EKLENDİ
+    st.sidebar.markdown("---")
+    if st.sidebar.button("🚪 Sistemden Çıkış Yap"):
+        st.session_state.giris_yapildi = False
+        st.rerun()
+
     if menu == "🔍 Ürün Arama & Analiz":
         st.subheader("🔍 Hızlı Ürün Arama & Detaylı Analiz")
         arama_metni = st.text_input("Aramak için yazın...", placeholder="Örn: Pro Plan, 101, Felix...")
@@ -138,8 +173,6 @@ if urunler_df is not None:
 
     elif menu == "📊 Toplu Liste":
         st.subheader("📋 Dinamik Toplu Fiyat Listesi")
-        
-        # --- YENİ EKLENEN KATEGORİ BAZLI KAR MODÜLÜ ---
         kar_modu = st.radio("Kar Marjı Belirleme Yöntemi:", ["🌍 Tüm Ürünlere Aynı Kar Marjını Uygula", "📁 Kategori Bazlı Kar Marjı Uygula"])
         
         kategori_karlari = {}
@@ -150,10 +183,7 @@ if urunler_df is not None:
             global_kar = st.number_input("Global Hedef Kar Marjı (%)", min_value=0.0, max_value=100.0, value=20.0, step=0.5)
         else:
             st.markdown("**Aşağıdan kategorilerinize özel kâr marjlarını belirleyin:**")
-            # Excel'deki benzersiz kategorileri bul
             kategoriler = [k for k in urunler_df['Kategori'].unique() if str(k).strip() != '']
-            
-            # Kategorileri 4'lü sütunlar halinde ekrana diz
             for i in range(0, len(kategoriler), 4):
                 cols = st.columns(4)
                 for j in range(4):
@@ -161,8 +191,6 @@ if urunler_df is not None:
                         kat = kategoriler[i + j]
                         with cols[j]:
                             kategori_karlari[kat] = st.number_input(f"{kat} (%)", min_value=0.0, max_value=100.0, value=20.0, step=0.5, key=f"kar_{kat}")
-            
-            # Eğer Excel'de kategorisi boş bırakılmış bir ürün varsa onun kârını da buradan alalım
             varsayilan_kar = st.number_input("Kategorisi Boş Olanlar İçin Kar (%)", min_value=0.0, max_value=100.0, value=20.0, step=0.5)
         
         st.markdown("---")
@@ -173,16 +201,12 @@ if urunler_df is not None:
                 toplu_data = []
                 for _, urun in urunler_df.iterrows():
                     if str(urun['Ürün Adı']).strip() == '': continue
-                    
-                    # --- ÜRÜNE UYGULANACAK KARI BELİRLE ---
-                    if kar_modu == "🌍 Tüm Ürünlere Aynı Kar Marjını Uygula":
-                        aktif_kar = global_kar
+                    if kar_modu == "🌍 Tüm Ürünlere Aynı Kar Marjını Uygula": aktif_kar = global_kar
                     else:
                         kat_ismi = str(urun.get('Kategori', '')).strip()
                         aktif_kar = kategori_karlari.get(kat_ismi, varsayilan_kar)
 
                     satir = {"Stok Kodu": urun['Stok Kodu'], "Ürün": urun['Ürün Adı'], "Kategori": urun['Kategori'], "Uygulanan Kar": f"%{aktif_kar}", "Maliyet": urun['Alış Fiyatı']}
-                    
                     for pz in p_yerleri:
                         res_t = fiyat_hesapla_v4(urun['Marka'], urun['Kategori'], sayisal_yap(urun['Desi']), sayisal_yap(urun['Alış Fiyatı']), sayisal_yap(urun['KDV Oranı']), pz, aktif_kar)
                         satir[pz] = round(res_t[0], 2) if res_t[0] > 0 else "Hata"
@@ -195,13 +219,7 @@ if urunler_df is not None:
                 buf = io.BytesIO()
                 with pd.ExcelWriter(buf, engine='xlsxwriter') as wr:
                     df_toplu.to_excel(wr, index=False, sheet_name='Toplu_Fiyatlar')
-                
-                st.download_button(
-                    label="📥 Sonuçları Excel Olarak İndir",
-                    data=buf.getvalue(),
-                    file_name="bikosumama_kategori_bazli_fiyatlar.xlsx",
-                    mime="application/vnd.ms-excel"
-                )
+                st.download_button("📥 Sonuçları Excel Olarak İndir", data=buf.getvalue(), file_name="bikosumama_fiyatlar.xlsx", mime="application/vnd.ms-excel")
 
     elif menu == "⚙️ Veritabanı":
         t1, t2, t3, t4 = st.tabs(["Ürünler", "Genel Kurallar", "Özel Kurallar", "Kargo"])
