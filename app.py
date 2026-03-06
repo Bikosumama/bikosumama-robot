@@ -38,7 +38,7 @@ def veri_getir():
         genel_kurallar = pd.read_csv(base_url + "Pazaryeri_Kurallari")
         ozel_kurallar = pd.read_csv(base_url + "Ozel_Kurallar")
         
-        # Yeni Sekmeyi Çek
+        # Teklifler Sekmesini Çek
         try: teklifler = pd.read_csv(base_url + "Trendyol_Teklifler")
         except: teklifler = pd.DataFrame(columns=['Stok Kodu', 'Teklif 1 Fiyat', 'Teklif 1 Komisyon', 'Teklif 2 Fiyat', 'Teklif 2 Komisyon', 'Teklif 3 Fiyat', 'Teklif 3 Komisyon'])
 
@@ -52,7 +52,6 @@ def veri_getir():
 
 urunler_df, kargo_df, genel_df, ozel_df, teklif_df = veri_getir()
 
-# --- STANDART HESAPLAMA MOTORU (Mevcut Olan) ---
 def fiyat_hesapla_v4(marka, kategori, desi, alis, kdv, pz_adi, kar_yuzdesi):
     kargo_ucreti_desi = 0
     pz_kargo = kargo_df[kargo_df['Pazaryeri Adı'].astype(str).str.strip() == pz_adi]
@@ -101,11 +100,8 @@ def fiyat_hesapla_v4(marka, kategori, desi, alis, kdv, pz_adi, kar_yuzdesi):
     s_d, k_d = matematik(kargo_ucreti_desi)
     return s_d, k_d, kargo_ucreti_desi, s_d*komisyon_oran, s_d*efektif_stopaj, hizmet, islem, diger, komisyon, "Desi", kaynak
 
-# --- TERSİNE HESAPLAMA MOTORU (KAMPANYA İÇİN) ---
 def kampanya_analiz_motoru(desi, alis, kdv, teklif_fiyat, teklif_komisyon):
     pz_adi = "Trendyol"
-    
-    # Kargo Hesapla
     kargo_ucreti = 0
     pz_kargo = kargo_df[kargo_df['Pazaryeri Adı'].astype(str).str.strip() == pz_adi]
     if pz_kargo.empty: pz_kargo = kargo_df[kargo_df['Pazaryeri Adı'].astype(str).str.strip() == 'Genel']
@@ -113,7 +109,6 @@ def kampanya_analiz_motoru(desi, alis, kdv, teklif_fiyat, teklif_komisyon):
         if sayisal_yap(row.get('Min Desi', 0)) <= desi <= sayisal_yap(row.get('Max Desi', 99)):
             kargo_ucreti = sayisal_yap(row.get('Kargo Ücreti', 0)); break
             
-    # Sabit Giderleri Trendyol Genel sekmesinden al
     pz_genel = genel_df[genel_df['Pazaryeri Adı'] == pz_adi]
     if pz_genel.empty: return 0, 0
     genel_k = pz_genel.iloc[0]
@@ -123,14 +118,12 @@ def kampanya_analiz_motoru(desi, alis, kdv, teklif_fiyat, teklif_komisyon):
     islem = sayisal_yap(genel_k.get('İşlem Gideri', 0))
     diger = sayisal_yap(genel_k.get('Diğer Giderler', 0))
     
-    # Barem Uygulaması
     b1_s, b1_k = sayisal_yap(genel_k.get('Barem 1 Sınırı (TL)', 0)), sayisal_yap(genel_k.get('Barem 1 Kargo (TL)', 0))
     b2_s, b2_k = sayisal_yap(genel_k.get('Barem 2 Sınırı (TL)', 0)), sayisal_yap(genel_k.get('Barem 2 Kargo (TL)', 0))
     if b1_s > 0 and teklif_fiyat <= b1_s: uygulanan_kargo = b1_k
     elif b2_s > 0 and teklif_fiyat <= b2_s: uygulanan_kargo = b2_k
     else: uygulanan_kargo = kargo_ucreti
 
-    # Giderleri Düş
     komisyon_tutari = teklif_fiyat * (teklif_komisyon / 100)
     efektif_stopaj = stopaj_oran / (1 + (kdv / 100))
     stopaj_tutari = teklif_fiyat * efektif_stopaj
@@ -138,22 +131,18 @@ def kampanya_analiz_motoru(desi, alis, kdv, teklif_fiyat, teklif_komisyon):
     toplam_maliyet = alis + uygulanan_kargo + islem + diger + hizmet + komisyon_tutari + stopaj_tutari
     net_kar_tl = teklif_fiyat - toplam_maliyet
     
-    # Kar marjını ürünün sabit maliyetine (alış+kargo+giderler) göre oranlıyoruz
     sabit_maliyet_tabani = alis + uygulanan_kargo + islem + diger + hizmet
-    if sabit_maliyet_tabani > 0:
-        net_kar_yuzde = (net_kar_tl / sabit_maliyet_tabani) * 100
+    if sabit_maliyet_tabani > 0: net_kar_yuzde = (net_kar_tl / sabit_maliyet_tabani) * 100
     else: net_kar_yuzde = 0
     
     return net_kar_tl, net_kar_yuzde
 
-# --- 4. KULLANICI ARAYÜZÜ ---
 if urunler_df is not None:
     menu = st.sidebar.radio("MENÜ", ["🔍 Ürün Arama & Analiz", "📊 Toplu Liste", "🎯 Ty Kampanya Simülatörü", "⚙️ Veritabanı"])
     st.sidebar.markdown("---")
     if st.sidebar.button("🚪 Sistemden Çıkış Yap"):
         st.session_state.giris_yapildi = False; st.rerun()
 
-    # (Diğer Menü İçerikleri Aynı...)
     if menu == "🔍 Ürün Arama & Analiz":
         st.subheader("🔍 Hızlı Ürün Arama & Detaylı Analiz")
         arama_metni = st.text_input("Aramak için yazın...", placeholder="Örn: Pro Plan, 101...")
@@ -191,74 +180,48 @@ if urunler_df is not None:
                 with pd.ExcelWriter(buf, engine='xlsxwriter') as wr: df_toplu.to_excel(wr, index=False)
                 st.download_button("📥 Excel İndir", data=buf.getvalue(), file_name="toplu_liste.xlsx")
 
-    # --- YENİ EKLENEN KAMPANYA SİMÜLATÖRÜ ---
     elif menu == "🎯 Ty Kampanya Simülatörü":
         st.subheader("🎯 Trendyol Fırsat Merkezi Süzgeci")
         st.markdown("Google Tablodaki `Trendyol_Teklifler` sekmesine yapıştırdığınız kademeli fiyat/komisyon tekliflerini analiz eder. **Sadece belirlediğiniz kâr marjının üstünde kalan teklifleri onaylar.**")
-        
-        min_kar_hedefi = st.number_input("Süzgeç: Kabul Edilebilir Minimum Kâr Marjı (%)", min_value=0.0, value=10.0, step=0.5, help="Bu oranın altındaki teklifler 'Zarar/Yetersiz' olarak işaretlenir.")
-        
+        min_kar_hedefi = st.number_input("Süzgeç: Kabul Edilebilir Minimum Kâr Marjı (%)", min_value=0.0, value=10.0, step=0.5)
         if st.button("🚀 Teklifleri Analiz Et"):
             if teklif_df.empty or len(teklif_df) == 0:
                 st.warning("⚠️ Trendyol_Teklifler sekmesinde veri bulunamadı.")
             else:
                 with st.spinner('Teklifler Süzgeçten Geçiriliyor...'):
                     analiz_sonuclari = []
-                    
                     for _, teklif in teklif_df.iterrows():
                         stok_kodu = str(teklif.get('Stok Kodu', '')).strip()
                         if not stok_kodu: continue
-                        
-                        # Ürünü veritabanında bul
                         eslesen_urun = urunler_df[urunler_df['Stok Kodu'].astype(str).str.strip() == stok_kodu]
                         if eslesen_urun.empty: continue
-                        
                         u = eslesen_urun.iloc[0]
                         desi = sayisal_yap(u.get('Desi', 0))
                         alis = sayisal_yap(u.get('Alış Fiyatı', 0))
                         kdv = sayisal_yap(u.get('KDV Oranı', 20))
-                        
-                        satir = {
-                            "Stok Kodu": stok_kodu,
-                            "Ürün Adı": u['Ürün Adı']
-                        }
-                        
-                        # 3 Teklifi Döngüyle Hesapla
+                        satir = {"Stok Kodu": stok_kodu, "Ürün Adı": u['Ürün Adı']}
                         for i in range(1, 4):
                             t_fiyat = sayisal_yap(teklif.get(f'Teklif {i} Fiyat', 0))
                             t_komisyon = sayisal_yap(teklif.get(f'Teklif {i} Komisyon', 0))
-                            
                             if t_fiyat > 0:
                                 kar_tl, kar_yuzde = kampanya_analiz_motoru(desi, alis, kdv, t_fiyat, t_komisyon)
-                                
-                                # Süzgeç Kararı
-                                if kar_yuzde >= min_kar_hedefi:
-                                    durum = f"✅ KABUL (Kar: %{round(kar_yuzde, 1)} | {round(kar_tl, 2)} TL)"
-                                else:
-                                    durum = f"❌ RED (Kar: %{round(kar_yuzde, 1)} | {round(kar_tl, 2)} TL)"
-                                    
-                                satir[f"Teklif {i} Kararı"] = durum
-                            else:
-                                satir[f"Teklif {i} Kararı"] = "-"
-                                
+                                if kar_yuzde >= min_kar_hedefi: satir[f"Teklif {i} Kararı"] = f"✅ KABUL (Kar: %{round(kar_yuzde, 1)} | {round(kar_tl, 2)} TL)"
+                                else: satir[f"Teklif {i} Kararı"] = f"❌ RED (Kar: %{round(kar_yuzde, 1)} | {round(kar_tl, 2)} TL)"
+                            else: satir[f"Teklif {i} Kararı"] = "-"
                         analiz_sonuclari.append(satir)
-                        
                     df_analiz = pd.DataFrame(analiz_sonuclari)
                     st.dataframe(df_analiz, use_container_width=True)
-                    
-                    # Excel Çıktısı
-                    st.markdown("<br>", unsafe_allow_html=True)
                     buf = io.BytesIO()
-                    with pd.ExcelWriter(buf, engine='xlsxwriter') as wr:
-                        df_analiz.to_excel(wr, index=False, sheet_name='Kampanya_Karari')
-                    
-                    st.download_button(
-                        label="📥 Onay/Red Listesini Excel İndir",
-                        data=buf.getvalue(),
-                        file_name="Trendyol_Kampanya_Kararlari.xlsx",
-                        mime="application/vnd.ms-excel"
-                    )
+                    with pd.ExcelWriter(buf, engine='xlsxwriter') as wr: df_analiz.to_excel(wr, index=False, sheet_name='Kampanya_Karari')
+                    st.download_button("📥 Onay/Red Listesini Excel İndir", data=buf.getvalue(), file_name="Trendyol_Kampanya_Kararlari.xlsx")
 
     elif menu == "⚙️ Veritabanı":
-        st.info("Trendyol tekliflerinizi 'Trendyol_Teklifler' sekmesine yapıştırın.")
-
+        st.subheader("⚙️ Veritabanı Görüntüleyici")
+        t1, t2, t3, t4, t5 = st.tabs(["Ürünler", "Genel Kurallar", "Özel Kurallar", "Kargo", "🎯 Ty Teklifler"])
+        with t1: st.dataframe(urunler_df)
+        with t2: st.dataframe(genel_df)
+        with t3: st.dataframe(ozel_df)
+        with t4: st.dataframe(kargo_df)
+        with t5: 
+            st.info("Bu tablo 'Trendyol_Teklifler' sekmesinden çekilen dinamik kampanya verilerini gösterir.")
+            st.dataframe(teklif_df)
