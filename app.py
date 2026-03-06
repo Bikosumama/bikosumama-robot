@@ -1,58 +1,77 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
+import gspread
+from google.oauth2.service_account import Credentials
 import io
+import json
 
-st.set_page_config(page_title="bikosumama Fiyat Robotu", page_icon="🐾", layout="wide")
+# --- 1. AYARLAR VE GÜVENLİK ---
+st.set_page_config(page_title="bikosumama ERP v2", page_icon="🐾", layout="wide")
 
-# --- 🔒 ŞİFRE KORUMA ---
+# Şık Tasarım İçin CSS Dokunuşları
+st.markdown("""
+    <style>
+    .stMetric { background-color: #ffffff; padding: 20px; border-radius: 12px; border: 1px solid #e1e4e8; box-shadow: 0px 4px 6px rgba(0,0,0,0.02); }
+    .main { background-color: #f8f9fa; }
+    div[data-testid="stExpander"] { border: none !important; box-shadow: none !important; }
+    </style>
+""", unsafe_allow_html=True)
+
 GIZLI_SIFRE = "biko2026"
 if "giris_yapildi" not in st.session_state: st.session_state.giris_yapildi = False
+
 if not st.session_state.giris_yapildi:
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
-        st.title("🔒 Güvenli Giriş")
-        girilen_sifre = st.text_input("Yönetici Şifresi:", type="password")
-        if st.button("Giriş Yap 🚀"):
-            if girilen_sifre == GIZLI_SIFRE: st.session_state.giris_yapildi = True; st.rerun()
-            else: st.error("❌ Hatalı şifre!")
+        st.title("🔒 bikosumama ERP")
+        st.info("Güvenli erişim için lütfen yönetici şifresini giriniz.")
+        sifre = st.text_input("Şifre:", type="password")
+        if st.button("Sisteme Giriş Yap 🚀"):
+            if sifre == GIZLI_SIFRE: st.session_state.giris_yapildi = True; st.rerun()
+            else: st.error("❌ Hatalı Şifre")
     st.stop()
 
-st.title("🤖 bikosumama | Gelişmiş Fiyatlandırma Paneli")
-st.markdown("---")
-
+# --- 2. GOOGLE SHEETS YAZMA/OKUMA BAĞLANTISI ---
 SHEET_ID = "1I_KpIeCTLWO0P_4ZLlMtUyoWtcIGvdT2p8GkjEnzN8M"
 
+@st.cache_resource
+def google_baglan():
+    # Streamlit Secrets'tan (google_credentials) JSON verisini alıyoruz
+    try:
+        info = json.loads(st.secrets["google_credentials"])
+        scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+        creds = Credentials.from_service_account_info(info, scopes=scope)
+        return gspread.authorize(creds)
+    except Exception as e:
+        st.error(f"⚠️ Bağlantı Hatası: Lütfen Secrets kısmındaki JSON formatını kontrol edin. Hata: {e}")
+        return None
+
+client = google_baglan()
+if client:
+    spreadsheet = client.open_by_key(SHEET_ID)
+else:
+    st.stop()
+
+def veri_cek(sekme_adi):
+    sheet = spreadsheet.worksheet(sekme_adi)
+    df = pd.DataFrame(sheet.get_all_records())
+    df.columns = df.columns.str.strip()
+    return df, sheet
+
+# Verileri Anlık Çekelim
+urunler_df, urunler_sheet = veri_cek("Urunler")
+kargo_df, _ = veri_cek("Kargo_Fiyatlari")
+genel_df, _ = veri_cek("Pazaryeri_Kurallari")
+ozel_df, _ = veri_cek("Ozel_Kurallar")
+teklif_df, teklif_sheet = veri_cek("Trendyol_Teklifler")
+
+# --- 3. MATEMATİKSEL HESAPLAMA MOTORU ---
 def sayisal_yap(deger):
     if pd.isna(deger) or str(deger).strip() == '': return 0.0
-    deger = str(deger).replace('%', '').replace(',', '.').replace(' ', '')
-    try: return float(deger)
+    try: return float(str(deger).replace('%', '').replace(',', '.').replace(' ', ''))
     except: return 0.0
 
-@st.cache_data(ttl=30)
-def veri_getir():
-    try:
-        base_url = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv&sheet="
-        urunler = pd.read_csv(base_url + "Urunler")
-        kargo = pd.read_csv(base_url + "Kargo_Fiyatlari")
-        genel_kurallar = pd.read_csv(base_url + "Pazaryeri_Kurallari")
-        ozel_kurallar = pd.read_csv(base_url + "Ozel_Kurallar")
-        
-        # Teklifler Sekmesini Çek
-        try: teklifler = pd.read_csv(base_url + "Trendyol_Teklifler")
-        except: teklifler = pd.DataFrame(columns=['Stok Kodu', 'Teklif 1 Fiyat', 'Teklif 1 Komisyon', 'Teklif 2 Fiyat', 'Teklif 2 Komisyon', 'Teklif 3 Fiyat', 'Teklif 3 Komisyon'])
-
-        for df in [urunler, kargo, genel_kurallar, ozel_kurallar, teklifler]:
-            df.columns = df.columns.str.strip()
-            df.fillna('', inplace=True)
-            
-        return urunler, kargo, genel_kurallar, ozel_kurallar, teklifler
-    except:
-        return None, None, None, None, None
-
-urunler_df, kargo_df, genel_df, ozel_df, teklif_df = veri_getir()
-
-def fiyat_hesapla_v4(marka, kategori, desi, alis, kdv, pz_adi, kar_yuzdesi):
+def fiyat_hesapla_v5(marka, kategori, desi, alis, kdv, pz_adi, kar_yuzdesi):
     kargo_ucreti_desi = 0
     pz_kargo = kargo_df[kargo_df['Pazaryeri Adı'].astype(str).str.strip() == pz_adi]
     if pz_kargo.empty: pz_kargo = kargo_df[kargo_df['Pazaryeri Adı'].astype(str).str.strip() == 'Genel']
@@ -137,130 +156,139 @@ def kampanya_analiz_motoru(desi, alis, kdv, teklif_fiyat, teklif_komisyon):
     
     return net_kar_tl, net_kar_yuzde
 
-if urunler_df is not None:
-    menu = st.sidebar.radio("MENÜ", ["🔍 Ürün Arama & Analiz", "📊 Toplu Liste", "🎯 Ty Kampanya Simülatörü", "⚙️ Veritabanı"])
-    st.sidebar.markdown("---")
-    if st.sidebar.button("🚪 Sistemden Çıkış Yap"):
-        st.session_state.giris_yapildi = False; st.rerun()
+# --- 4. ARAYÜZ MODÜLLERİ ---
+st.sidebar.title("🐾 bikosumama ERP v2")
+menu = st.sidebar.radio("MENÜ", ["📊 Dashboard", "➕ Ürün Yönetimi", "🔍 Ürün Analiz", "📊 Toplu Liste", "🎯 Ty Kampanya", "⚙️ Veritabanı"])
+st.sidebar.markdown("---")
+if st.sidebar.button("🚪 Güvenli Çıkış"):
+    st.session_state.giris_yapildi = False; st.rerun()
 
-    # İŞTE GERİ DÖNEN EFSANE DETAYLI ARAMA EKRANI!
-    if menu == "🔍 Ürün Arama & Analiz":
-        st.subheader("🔍 Hızlı Ürün Arama & Detaylı Analiz")
-        arama_metni = st.text_input("Aramak için yazın...", placeholder="Örn: Pro Plan, 101...")
-        mask = (urunler_df['Ürün Adı'].astype(str).str.contains(arama_metni, case=False) | urunler_df['Stok Kodu'].astype(str).str.contains(arama_metni, case=False))
-        filtrelenmis_df = urunler_df[mask]
-        if arama_metni != "":
-            event = st.dataframe(filtrelenmis_df[['Stok Kodu', 'Marka', 'Ürün Adı', 'Alış Fiyatı']], use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row")
-            if len(event.selection.rows) > 0:
-                u = filtrelenmis_df.iloc[event.selection.rows[0]]
-                kar = st.number_input("Hedef Net Kar Marjı (%)", min_value=0.0, value=20.0, step=0.5)
-                analiz_data = []
-                for pz in genel_df['Pazaryeri Adı'].unique():
-                    res = fiyat_hesapla_v4(u['Marka'], u['Kategori'], sayisal_yap(u['Desi']), sayisal_yap(u['Alış Fiyatı']), sayisal_yap(u['KDV Oranı']), pz, kar)
-                    s, k, kg, km_t, stp, hiz, isl, dgr, km_y, ntu, kay = res
-                    if s > 0:
-                        analiz_data.append({
-                            "Pazaryeri": pz, 
-                            "SATIŞ FİYATI": f"{round(s, 2)} TL", 
-                            "NET KAR (TL)": f"{round(k, 2)} TL", 
-                            "Komisyon (%)": f"%{km_y}",
-                            "Kargo Gideri": f"{round(kg, 2)} ({ntu})", 
-                            "Komisyon (TL)": f"{round(km_t, 2)} TL", 
-                            "Kural Kaynağı": kay
-                        })
-                st.table(pd.DataFrame(analiz_data))
-        else: st.info("👆 Başlamak için ürün adı veya stok kodu yazın.")
+if menu == "📊 Dashboard":
+    st.subheader("📊 Operasyonel Genel Bakış")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("📦 Kayıtlı Ürün", len(urunler_df))
+    c2.metric("🏪 Pazaryeri Sayısı", len(genel_df))
+    c3.metric("🚚 Kargo Baremi", len(kargo_df))
+    c4.metric("🌟 Özel Kural", len(ozel_df))
+    
+    st.markdown("---")
+    st.write("### 🕒 Son Eklenen Ürünler")
+    st.dataframe(urunler_df.tail(10), use_container_width=True, hide_index=True)
 
-    elif menu == "📊 Toplu Liste":
-        st.subheader("📋 Dinamik Toplu Fiyat Listesi")
-        kar_modu = st.radio("Kar Marjı Belirleme Yöntemi:", ["🌍 Tüm Ürünlere Aynı Kar Marjını Uygula", "📁 Kategori Bazlı Kar Marjı Uygula"])
+elif menu == "➕ Ürün Yönetimi":
+    st.subheader("➕ Yeni Ürün Kayıt Formu")
+    st.info("Buradan eklediğiniz ürünler anında Google E-Tablo'ya yazılır.")
+    
+    with st.form("yeni_urun_form", clear_on_submit=True):
+        col1, col2 = st.columns(2)
+        with col1:
+            stok = st.text_input("Stok Kodu (SKU)*", placeholder="Örn: BIKO-101")
+            ad = st.text_input("Ürün Adı*", placeholder="Örn: Pro Plan Somonlu 12kg")
+            marka = st.text_input("Marka", placeholder="Örn: Pro Plan")
+        with col2:
+            kat = st.selectbox("Kategori", ["Kuru Mama", "Yaş Mama", "Ödül Maması", "Kum", "Aksesuar", "Ek Takviye"])
+            alis = st.number_input("Alış Fiyatı (KDV Dahil)", min_value=0.0, step=0.01)
+            desi = st.number_input("Desi Değeri", min_value=0.0, step=0.1)
+            kdv_orani = st.selectbox("KDV Oranı (%)", [20, 10, 1], index=0)
         
-        kategori_karlari = {}
-        global_kar = 20.0
-        varsayilan_kar = 20.0
+        submit = st.form_submit_button("Ürünü Kaydet ve Google Tablo'ya Yaz 🚀")
         
-        if kar_modu == "🌍 Tüm Ürünlere Aynı Kar Marjını Uygula":
-            global_kar = st.number_input("Global Hedef Kar Marjı (%)", min_value=0.0, max_value=100.0, value=20.0, step=0.5)
-        else:
-            st.markdown("**Aşağıdan kategorilerinize özel kâr marjlarını belirleyin:**")
-            kategoriler = [k for k in urunler_df['Kategori'].unique() if str(k).strip() != '']
-            for i in range(0, len(kategoriler), 4):
-                cols = st.columns(4)
-                for j in range(4):
-                    if i + j < len(kategoriler):
-                        kat = kategoriler[i + j]
-                        with cols[j]:
-                            kategori_karlari[kat] = st.number_input(f"{kat} (%)", min_value=0.0, max_value=100.0, value=20.0, step=0.5, key=f"kar_{kat}")
-            varsayilan_kar = st.number_input("Kategorisi Boş Olanlar İçin Kar (%)", min_value=0.0, max_value=100.0, value=20.0, step=0.5)
-        
-        st.markdown("---")
-
-        if st.button("🚀 Tümünü Hesapla"):
-            with st.spinner('Tüm ürünler hesaplanıyor, lütfen bekleyin...'):
-                p_yerleri = genel_df['Pazaryeri Adı'].unique()
-                toplu_data = []
-                for _, urun in urunler_df.iterrows():
-                    if str(urun['Ürün Adı']).strip() == '': continue
-                    if kar_modu == "🌍 Tüm Ürünlere Aynı Kar Marjını Uygula": aktif_kar = global_kar
-                    else:
-                        kat_ismi = str(urun.get('Kategori', '')).strip()
-                        aktif_kar = kategori_karlari.get(kat_ismi, varsayilan_kar)
-
-                    satir = {"Stok Kodu": urun['Stok Kodu'], "Ürün": urun['Ürün Adı'], "Kategori": urun['Kategori'], "Uygulanan Kar": f"%{aktif_kar}", "Maliyet": urun['Alış Fiyatı']}
-                    for pz in p_yerleri:
-                        res_t = fiyat_hesapla_v4(urun['Marka'], urun['Kategori'], sayisal_yap(urun['Desi']), sayisal_yap(urun['Alış Fiyatı']), sayisal_yap(urun['KDV Oranı']), pz, aktif_kar)
-                        satir[pz] = round(res_t[0], 2) if res_t[0] > 0 else "Hata"
-                    toplu_data.append(satir)
-                
-                df_toplu = pd.DataFrame(toplu_data)
-                st.dataframe(df_toplu, use_container_width=True)
-                
-                buf = io.BytesIO()
-                with pd.ExcelWriter(buf, engine='xlsxwriter') as wr: df_toplu.to_excel(wr, index=False, sheet_name='Toplu_Fiyatlar')
-                st.download_button("📥 Sonuçları Excel Olarak İndir", data=buf.getvalue(), file_name="bikosumama_fiyatlar.xlsx", mime="application/vnd.ms-excel")
-
-    elif menu == "🎯 Ty Kampanya Simülatörü":
-        st.subheader("🎯 Trendyol Fırsat Merkezi Süzgeci")
-        st.markdown("Google Tablodaki `Trendyol_Teklifler` sekmesine yapıştırdığınız kademeli fiyat/komisyon tekliflerini analiz eder. **Sadece belirlediğiniz kâr marjının üstünde kalan teklifleri onaylar.**")
-        min_kar_hedefi = st.number_input("Süzgeç: Kabul Edilebilir Minimum Kâr Marjı (%)", min_value=0.0, value=10.0, step=0.5)
-        if st.button("🚀 Teklifleri Analiz Et"):
-            if teklif_df.empty or len(teklif_df) == 0:
-                st.warning("⚠️ Trendyol_Teklifler sekmesinde veri bulunamadı.")
+        if submit:
+            if not stok or not ad:
+                st.warning("⚠️ Lütfen Stok Kodu ve Ürün Adı alanlarını doldurun.")
             else:
-                with st.spinner('Teklifler Süzgeçten Geçiriliyor...'):
-                    analiz_sonuclari = []
-                    for _, teklif in teklif_df.iterrows():
-                        stok_kodu = str(teklif.get('Stok Kodu', '')).strip()
-                        if not stok_kodu: continue
-                        eslesen_urun = urunler_df[urunler_df['Stok Kodu'].astype(str).str.strip() == stok_kodu]
-                        if eslesen_urun.empty: continue
-                        u = eslesen_urun.iloc[0]
-                        desi = sayisal_yap(u.get('Desi', 0))
-                        alis = sayisal_yap(u.get('Alış Fiyatı', 0))
-                        kdv = sayisal_yap(u.get('KDV Oranı', 20))
-                        satir = {"Stok Kodu": stok_kodu, "Ürün Adı": u['Ürün Adı']}
-                        for i in range(1, 4):
-                            t_fiyat = sayisal_yap(teklif.get(f'Teklif {i} Fiyat', 0))
-                            t_komisyon = sayisal_yap(teklif.get(f'Teklif {i} Komisyon', 0))
-                            if t_fiyat > 0:
-                                kar_tl, kar_yuzde = kampanya_analiz_motoru(desi, alis, kdv, t_fiyat, t_komisyon)
-                                if kar_yuzde >= min_kar_hedefi: satir[f"Teklif {i} Kararı"] = f"✅ KABUL (Kar: %{round(kar_yuzde, 1)} | {round(kar_tl, 2)} TL)"
-                                else: satir[f"Teklif {i} Kararı"] = f"❌ RED (Kar: %{round(kar_yuzde, 1)} | {round(kar_tl, 2)} TL)"
-                            else: satir[f"Teklif {i} Kararı"] = "-"
-                        analiz_sonuclari.append(satir)
-                    df_analiz = pd.DataFrame(analiz_sonuclari)
-                    st.dataframe(df_analiz, use_container_width=True)
-                    buf = io.BytesIO()
-                    with pd.ExcelWriter(buf, engine='xlsxwriter') as wr: df_analiz.to_excel(wr, index=False, sheet_name='Kampanya_Karari')
-                    st.download_button("📥 Onay/Red Listesini Excel İndir", data=buf.getvalue(), file_name="Trendyol_Kampanya_Kararlari.xlsx")
+                try:
+                    yeni_satir = [stok, marka, ad, kat, desi, alis, kdv_orani]
+                    urunler_sheet.append_row(yeni_satir)
+                    st.success(f"✅ Başarılı: '{ad}' ürünü Google E-Tablolar'a eklendi!")
+                    st.cache_resource.clear() # Veriyi yenilemek için cache temizle
+                except Exception as e:
+                    st.error(f"❌ Kayıt Hatası: {e}")
 
-    elif menu == "⚙️ Veritabanı":
-        st.subheader("⚙️ Veritabanı Görüntüleyici")
-        t1, t2, t3, t4, t5 = st.tabs(["Ürünler", "Genel Kurallar", "Özel Kurallar", "Kargo", "🎯 Ty Teklifler"])
-        with t1: st.dataframe(urunler_df)
-        with t2: st.dataframe(genel_df)
-        with t3: st.dataframe(ozel_df)
-        with t4: st.dataframe(kargo_df)
-        with t5: 
-            st.info("Bu tablo 'Trendyol_Teklifler' sekmesinden çekilen dinamik kampanya verilerini gösterir.")
-            st.dataframe(teklif_df)
+elif menu == "🔍 Ürün Analiz":
+    st.subheader("🔍 Detaylı Ürün Kar Analizi")
+    arama = st.text_input("Aramak için yazın (Stok Kodu veya İsim)...")
+    if arama:
+        mask = (urunler_df['Ürün Adı'].astype(str).str.contains(arama, case=False) | urunler_df['Stok Kodu'].astype(str).str.contains(arama, case=False))
+        filtrelenmis = urunler_df[mask]
+        event = st.dataframe(filtrelenmis[['Stok Kodu', 'Marka', 'Ürün Adı', 'Alış Fiyatı']], use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row")
+        
+        if len(event.selection.rows) > 0:
+            u = filtrelenmis.iloc[event.selection.rows[0]]
+            st.markdown(f"#### 📊 **Seçilen Ürün:** {u['Ürün Adı']}")
+            kar = st.number_input("Hedef Net Kar Marjı (%)", min_value=0.0, value=20.0, step=0.5)
+            
+            analiz_data = []
+            for pz in genel_df['Pazaryeri Adı'].unique():
+                res = fiyat_hesapla_v5(u['Marka'], u['Kategori'], sayisal_yap(u['Desi']), sayisal_yap(u['Alış Fiyatı']), sayisal_yap(u['KDV Oranı']), pz, kar)
+                s, k, kg, km_t, stp, hiz, isl, dgr, km_y, ntu, kay = res
+                if s > 0:
+                    analiz_data.append({
+                        "Pazaryeri": pz, 
+                        "SATIŞ FİYATI": f"{round(s, 2)} TL", 
+                        "NET KAR (TL)": f"{round(k, 2)} TL", 
+                        "Komisyon (%)": f"%{km_y}",
+                        "Kargo Gideri": f"{round(kg, 2)} ({ntu})", 
+                        "Komisyon (TL)": f"{round(km_t, 2)} TL", 
+                        "Kural Kaynağı": kay
+                    })
+            st.table(pd.DataFrame(analiz_data))
+
+elif menu == "📊 Toplu Liste":
+    st.subheader("📋 Kategori Bazlı Toplu Fiyat Listesi")
+    kar_modu = st.radio("Kar Modu:", ["Global (Tüm Mağaza)", "Kategori Bazlı"])
+    
+    if kar_modu == "Global (Tüm Mağaza)":
+        g_kar = st.number_input("Genel Kar Marjı (%)", value=20.0)
+        aktif_karlar = {k: g_kar for k in urunler_df['Kategori'].unique()}
+    else:
+        st.write("Her kategori için kâr oranını girin:")
+        aktif_karlar = {}
+        kategoriler = [k for k in urunler_df['Kategori'].unique() if str(k).strip() != '']
+        cols = st.columns(4)
+        for i, kat in enumerate(kategoriler):
+            aktif_karlar[kat] = cols[i % 4].number_input(f"{kat} (%)", value=20.0, key=f"kat_{kat}")
+    
+    if st.button("🚀 Tüm Listeyi Hesapla"):
+        toplu = []
+        for _, u in urunler_df.iterrows():
+            if str(u['Ürün Adı']).strip() == '': continue
+            kar_o = aktif_karlar.get(u['Kategori'], 20.0)
+            satir = {"SKU": u['Stok Kodu'], "Ürün": u['Ürün Adı'], "Kategori": u['Kategori'], "Alış": u['Alış Fiyatı']}
+            for pz in genel_df['Pazaryeri Adı'].unique():
+                res = fiyat_hesapla_v5(u['Marka'], u['Kategori'], sayisal_yap(u['Desi']), sayisal_yap(u['Alış Fiyatı']), sayisal_yap(u['KDV Oranı']), pz, kar_o)
+                satir[pz] = round(res[0], 2) if res[0] > 0 else "Hata"
+            toplu.append(satir)
+        df_toplu = pd.DataFrame(toplu)
+        st.dataframe(df_toplu, use_container_width=True)
+        
+        buf = io.BytesIO()
+        with pd.ExcelWriter(buf, engine='xlsxwriter') as wr: df_toplu.to_excel(wr, index=False)
+        st.download_button("📥 Excel Olarak İndir", buf.getvalue(), file_name="bikosumama_fiyatlar.xlsx")
+
+elif menu == "🎯 Ty Kampanya":
+    st.subheader("🎯 Trendyol Kampanya Analiz Süzgeci")
+    min_kar = st.number_input("Minimum Kabul Edilebilir Kar (%)", value=10.0)
+    if st.button("🚀 Teklifleri Süzgeçten Geçir"):
+        sonuclar = []
+        for _, t in teklif_df.iterrows():
+            stok = str(t.get('Stok Kodu', '')).strip()
+            eslesen = urunler_df[urunler_df['Stok Kodu'].astype(str).str.strip() == stok]
+            if not eslesen.empty:
+                u = eslesen.iloc[0]
+                satir = {"SKU": stok, "Ürün": u['Ürün Adı']}
+                for i in range(1, 4):
+                    tf, tk = sayisal_yap(t.get(f'Teklif {i} Fiyat')), sayisal_yap(t.get(f'Teklif {i} Komisyon'))
+                    if tf > 0:
+                        ktl, ky = kampanya_analiz_motoru(sayisal_yap(u['Desi']), sayisal_yap(u['Alış Fiyatı']), sayisal_yap(u['KDV Oranı']), tf, tk)
+                        satir[f"Teklif {i}"] = f"✅ KABUL (%{round(ky,1)})" if ky >= min_kar else f"❌ RED (%{round(ky,1)})"
+                    else: satir[f"Teklif {i}"] = "-"
+                sonuclar.append(satir)
+        st.dataframe(pd.DataFrame(sonuclar), use_container_width=True)
+
+elif menu == "⚙️ Veritabanı":
+    st.subheader("⚙️ Ham Veri Görüntüleyici")
+    tab1, tab2, tab3 = st.tabs(["Ürünler", "Kurallar", "Kampanya Teklifleri"])
+    with tab1: st.dataframe(urunler_df)
+    with tab2: st.write("Pazaryeri Kuralları"); st.dataframe(genel_df)
+    with tab3: st.dataframe(teklif_df)
