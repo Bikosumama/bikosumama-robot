@@ -77,54 +77,86 @@ def sayisal_yap(deger):
     try: return float(str(deger).replace('%', '').replace(',', '.').replace(' ', ''))
     except: return 0.0
 
-def fiyat_hesapla_v5(marka, kategori, desi, alis, kdv, pz_adi, kar_yuzdesi):
+def fiyat_hesapla_v6(marka, kategori, desi, alis, kdv, pz_adi, kar_yuzdesi):
+    # İsim eşleşme hatasını önlemek için pz_adi'ni temizleyelim
+    pz_adi_temiz = str(pz_adi).strip()
+    
+    # 1. KARGO HESAPLAMA
     kargo_ucreti_desi = 0
-    pz_kargo = kargo_df[kargo_df['Pazaryeri Adı'].astype(str).str.strip() == pz_adi]
-    if pz_kargo.empty: pz_kargo = kargo_df[kargo_df['Pazaryeri Adı'].astype(str).str.strip() == 'Genel']
+    # Pazaryerine özel kargo ayarı var mı bak, yoksa 'Genel'i kullan
+    pz_kargo = kargo_df[kargo_df['Pazaryeri Adı'].astype(str).str.strip().str.lower() == pz_adi_temiz.lower()]
+    if pz_kargo.empty: 
+        pz_kargo = kargo_df[kargo_df['Pazaryeri Adı'].astype(str).str.strip() == 'Genel']
+    
     for _, row in pz_kargo.iterrows():
         if sayisal_yap(row.get('Min Desi', 0)) <= desi <= sayisal_yap(row.get('Max Desi', 99)):
             kargo_ucreti_desi = sayisal_yap(row.get('Kargo Ücreti', 0))
             break
     
-    pz_genel = genel_df[genel_df['Pazaryeri Adı'] == pz_adi]
-    if pz_genel.empty: return 0,0,0,0,0,0,0,0,0, "Hata", "Yok"
+    # 2. KOMİSYON VE GİDERLERİ BULMA
+    # Pazaryeri kurallarını küçük/büyük harf duyarsız ara
+    pz_genel_mask = genel_df['Pazaryeri Adı'].astype(str).str.strip().str.lower() == pz_adi_temiz.lower()
+    pz_genel = genel_df[pz_genel_mask]
+    
+    if pz_genel.empty: 
+        return 0,0,0,0,0,0,0,0,0, "Veri Yok", "Pazaryeri Bulunamadı"
+        
     genel_k = pz_genel.iloc[0]
-    komisyon = sayisal_yap(genel_k.get('Komisyon Oranı', 0)); kaynak = "🌍 Genel"
+    komisyon = sayisal_yap(genel_k.get('Komisyon Oranı', 0))
+    kaynak = "🌍 Genel"
 
-    pz_ozel = ozel_df[ozel_df['Pazaryeri Adı'] == pz_adi]
-    marka_o = pz_ozel[pz_ozel['Marka'].astype(str).str.strip() == marka]
+    # 3. ÖZEL KURALLAR (Marka veya Kategori Bazlı)
+    pz_ozel = ozel_df[ozel_df['Pazaryeri Adı'].astype(str).str.strip().str.lower() == pz_adi_temiz.lower()]
+    
+    # Marka kontrolü
+    marka_o = pz_ozel[pz_ozel['Marka'].astype(str).str.strip().str.lower() == str(marka).lower()]
     if not marka_o.empty and str(marka_o.iloc[0]['Komisyon Oranı']).strip() != '':
-        komisyon = sayisal_yap(marka_o.iloc[0]['Komisyon Oranı']); kaynak = "🌟 Marka"
+        komisyon = sayisal_yap(marka_o.iloc[0]['Komisyon Oranı'])
+        kaynak = "🌟 Marka"
     else:
-        kat_o = pz_ozel[pz_ozel['Kategori'].astype(str).str.strip() == kategori]
+        # Kategori kontrolü
+        kat_o = pz_ozel[pz_ozel['Kategori'].astype(str).str.strip().str.lower() == str(kategori).lower()]
         if not kat_o.empty and str(kat_o.iloc[0]['Komisyon Oranı']).strip() != '':
-            komisyon = sayisal_yap(kat_o.iloc[0]['Komisyon Oranı']); kaynak = "📁 Kategori"
+            komisyon = sayisal_yap(kat_o.iloc[0]['Komisyon Oranı'])
+            kaynak = "📁 Kategori"
 
-    komisyon_oran, stopaj_oran = komisyon/100, sayisal_yap(genel_k.get('Stopaj Oranı', 0))/100
-    hizmet, islem, diger = sayisal_yap(genel_k.get('Platform Hizmet Bedeli', 0)), sayisal_yap(genel_k.get('İşlem Gideri', 0)), sayisal_yap(genel_k.get('Diğer Giderler', 0))
+    # 4. MATEMATİKSEL HESAPLAMA (Ters Matris)
+    komisyon_oran = komisyon / 100
+    stopaj_oran = sayisal_yap(genel_k.get('Stopaj Oranı', 0)) / 100
+    hizmet = sayisal_yap(genel_k.get('Platform Hizmet Bedeli', 0))
+    islem = sayisal_yap(genel_k.get('İşlem Gideri', 0))
+    diger = sayisal_yap(genel_k.get('Diğer Giderler', 0))
+    
     efektif_stopaj = stopaj_oran / (1 + (kdv / 100))
     bolen = 1 - komisyon_oran - efektif_stopaj
+    
     if bolen <= 0: return 0,0,0,0,0,0,0,0,0, "Hata", "Oran Hatası"
 
     def matematik(k_maliyet):
         toplam_sabit = alis + k_maliyet + islem + diger + hizmet
         h_kar = toplam_sabit * (kar_yuzdesi / 100)
-        return (toplam_sabit + h_kar) / bolen, h_kar
+        satis_fiyati = (toplam_sabit + h_kar) / bolen
+        return satis_fiyati, h_kar
 
-    b1_s, b1_k = sayisal_yap(genel_k.get('Barem 1 Sınırı (TL)', 0)), sayisal_yap(genel_k.get('Barem 1 Kargo (TL)', 0))
-    b2_s, b2_k = sayisal_yap(genel_k.get('Barem 2 Sınırı (TL)', 0)), sayisal_yap(genel_k.get('Barem 2 Kargo (TL)', 0))
-    u_sinir = sayisal_yap(genel_k.get('Ücretsiz Kargo Sınırı (TL)', 0))
+    # Barem Kontrolleri
+    b1_s = sayisal_yap(genel_k.get('Barem 1 Sınırı (TL)', 0))
+    b1_k = sayisal_yap(genel_k.get('Barem 1 Kargo (TL)', 0))
+    b2_s = sayisal_yap(genel_k.get('Barem 2 Sınırı (TL)', 0))
+    b2_k = sayisal_yap(genel_k.get('Barem 2 Kargo (TL)', 0))
 
+    # 1. Barem Testi
     s1, k1 = matematik(b1_k)
-    if b1_s > 0 and s1 <= b1_s: return s1, k1, b1_k, s1*komisyon_oran, s1*efektif_stopaj, hizmet, islem, diger, komisyon, "1. Barem", kaynak
+    if b1_s > 0 and s1 <= b1_s:
+        return s1, k1, b1_k, s1*komisyon_oran, s1*efektif_stopaj, hizmet, islem, diger, komisyon, "1. Barem", kaynak
+
+    # 2. Barem Testi
     s2, k2 = matematik(b2_k)
-    if b2_s > 0 and s2 <= b2_s: return s2, k2, b2_k, s2*komisyon_oran, s2*efektif_stopaj, hizmet, islem, diger, komisyon, "2. Barem", kaynak
-    if u_sinir > 0:
-        s_u, k_u = matematik(0)
-        if s_u < u_sinir: return s_u, k_u, 0, s_u*komisyon_oran, s_u*efektif_stopaj, hizmet, islem, diger, komisyon, "Alıcı Öder", kaynak
+    if b2_s > 0 and s2 <= b2_s:
+        return s2, k2, b2_k, s2*komisyon_oran, s2*efektif_stopaj, hizmet, islem, diger, komisyon, "2. Barem", kaynak
+
+    # Desi Bazlı Test
     s_d, k_d = matematik(kargo_ucreti_desi)
     return s_d, k_d, kargo_ucreti_desi, s_d*komisyon_oran, s_d*efektif_stopaj, hizmet, islem, diger, komisyon, "Desi", kaynak
-
 def kampanya_analiz_motoru(desi, alis, kdv, tf, tk):
     pz_adi = "Trendyol"
     kargo_ucreti = 0
@@ -254,3 +286,4 @@ elif menu == "⚙️ Veritabanı":
     with tab3: st.dataframe(ozel_df)
     with tab4: st.dataframe(kargo_df)
     with tab5: st.dataframe(teklif_df)
+
