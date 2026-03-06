@@ -219,7 +219,7 @@ if urunler_df is not None:
                 with pd.ExcelWriter(buf, engine='xlsxwriter') as wr: df_toplu.to_excel(wr, index=False, sheet_name='Toplu_Fiyatlar')
                 st.download_button("📥 Sonuçları Excel Olarak İndir", data=buf.getvalue(), file_name="bikosumama_fiyatlar.xlsx", mime="application/vnd.ms-excel")
 
-    def kampanya_analiz_motoru(desi, alis, kdv, teklif_fiyat, teklif_komisyon):
+   def kampanya_analiz_motoru(desi, alis, kdv, teklif_fiyat, teklif_komisyon):
     pz_adi = "Trendyol"
     kargo_ucreti = 0
     
