@@ -6,7 +6,7 @@ import io
 import json
 
 # --- 1. AYARLAR VE GÜVENLİK ---
-st.set_page_config(page_title="bikosumama ERP v2.6", page_icon="🐾", layout="wide")
+st.set_page_config(page_title="bikosumama ERP v2.7", page_icon="🐾", layout="wide")
 
 st.markdown("""
     <style>
@@ -54,14 +54,12 @@ def veri_cek(sekme_adi):
     df.columns = df.columns.str.strip()
     return df, sheet
 
-# Tüm Verileri Çekelim
 urunler_df, urunler_sheet = veri_cek("Urunler")
 kargo_df, _ = veri_cek("Kargo_Fiyatlari")
 genel_df, _ = veri_cek("Pazaryeri_Kurallari")
 ozel_df, _ = veri_cek("Ozel_Kurallar")
 teklif_df, _ = veri_cek("Trendyol_Teklifler")
 
-# Sabitler
 try:
     sabitler_raw, _ = veri_cek("Sabitler")
     marka_listesi = sorted([m for m in sabitler_raw['Markalar'].unique() if str(m).strip() != ''])
@@ -70,7 +68,7 @@ except:
     marka_listesi = ["Genel"]
     kategori_listesi = ["Genel"]
 
-# --- 3. HESAPLAMA MOTORU (v6 - Esnek Arama Destekli) ---
+# --- 3. HESAPLAMA MOTORU ---
 def sayisal_yap(deger):
     if pd.isna(deger) or str(deger).strip() == '': return 0.0
     try: return float(str(deger).replace('%', '').replace(',', '.').replace(' ', ''))
@@ -79,7 +77,6 @@ def sayisal_yap(deger):
 def fiyat_hesapla_v6(marka, kategori, desi, alis, kdv, pz_adi, kar_yuzdesi):
     pz_adi_temiz = str(pz_adi).strip()
     
-    # 1. Kargo
     kargo_ucreti_desi = 0
     pz_kargo = kargo_df[kargo_df['Pazaryeri Adı'].astype(str).str.strip().str.lower() == pz_adi_temiz.lower()]
     if pz_kargo.empty: pz_kargo = kargo_df[kargo_df['Pazaryeri Adı'].astype(str).str.strip() == 'Genel']
@@ -88,11 +85,10 @@ def fiyat_hesapla_v6(marka, kategori, desi, alis, kdv, pz_adi, kar_yuzdesi):
             kargo_ucreti_desi = sayisal_yap(row.get('Kargo Ücreti', 0))
             break
     
-    # 2. Kurallar
     pz_genel = genel_df[genel_df['Pazaryeri Adı'].astype(str).str.strip().str.lower() == pz_adi_temiz.lower()]
-    if pz_genel.empty: return 0,0,0,0,0,0,0,0,0, "Veri Yok", "Pazaryeri Bulunamadı"
-    genel_k = pz_genel.iloc[0]
+    if pz_genel.empty: return 0,0,0,0,0,0,0,0,0, "Hata", "Pazaryeri Kurallarda Yok"
     
+    genel_k = pz_genel.iloc[0]
     komisyon = sayisal_yap(genel_k.get('Komisyon Oranı', 0))
     kaynak = "🌍 Genel"
 
@@ -109,7 +105,9 @@ def fiyat_hesapla_v6(marka, kategori, desi, alis, kdv, pz_adi, kar_yuzdesi):
     hizmet, islem, diger = sayisal_yap(genel_k.get('Platform Hizmet Bedeli', 0)), sayisal_yap(genel_k.get('İşlem Gideri', 0)), sayisal_yap(genel_k.get('Diğer Giderler', 0))
     efektif_stopaj = stopaj_oran / (1 + (kdv / 100))
     bolen = 1 - komisyon_oran - efektif_stopaj
-    if bolen <= 0: return 0,0,0,0,0,0,0,0,0, "Hata", "Oran Hatası"
+    
+    # EĞER KOMİSYON ÇOK YÜKSEKSE BURASI HATA VERİR
+    if bolen <= 0: return 0,0,0,0,0,0,0,0,0, "Hata", f"Oran Çok Yüksek (Bölen: {round(bolen,2)})"
 
     def matematik(k_maliyet):
         toplam_sabit = alis + k_maliyet + islem + diger + hizmet
@@ -128,9 +126,7 @@ def fiyat_hesapla_v6(marka, kategori, desi, alis, kdv, pz_adi, kar_yuzdesi):
     return s_d, k_d, kargo_ucreti_desi, s_d*komisyon_oran, s_d*efektif_stopaj, hizmet, islem, diger, komisyon, "Desi", kaynak
 
 def kampanya_analiz_motoru(desi, alis, kdv, tf, tk):
-    # Trendyol özel kampanya motoru
     res = fiyat_hesapla_v6("Genel", "Genel", desi, alis, kdv, "Trendyol", 0)
-    # Basitleştirilmiş kampanya kârı hesabı
     pz_genel = genel_df[genel_df['Pazaryeri Adı'].str.contains("Trendyol", case=False)].iloc[0]
     stp_o = sayisal_yap(pz_genel.get('Stopaj Oranı', 0))/100
     hiz, isl, dig = sayisal_yap(pz_genel.get('Platform Hizmet Bedeli', 0)), sayisal_yap(pz_genel.get('İşlem Gideri', 0)), sayisal_yap(pz_genel.get('Diğer Giderler', 0))
@@ -142,7 +138,7 @@ def kampanya_analiz_motoru(desi, alis, kdv, tf, tk):
     return nktl, nky
 
 # --- 4. ARAYÜZ ---
-st.sidebar.title("🐾 bikosumama ERP v2.6")
+st.sidebar.title("🐾 bikosumama ERP v2.7")
 menu = st.sidebar.radio("MENÜ", ["📊 Dashboard", "➕ Ürün Yönetimi", "🔍 Ürün Analiz", "📊 Toplu Liste", "🎯 Ty Kampanya", "⚙️ Veritabanı"])
 
 if menu == "📊 Dashboard":
@@ -169,7 +165,7 @@ elif menu == "➕ Ürün Yönetimi":
             st.success("Kaydedildi!"); st.cache_resource.clear()
 
 elif menu == "🔍 Ürün Analiz":
-    st.subheader("🔍 Ürün Analiz")
+    st.subheader("🔍 Ürün Analiz ve Hata Raporlama")
     arama = st.text_input("Ürün Ara...")
     if arama:
         filtrelenmis = urunler_df[urunler_df['Ürün Adı'].str.contains(arama, case=False) | urunler_df['Stok Kodu'].str.contains(arama, case=False)]
@@ -177,10 +173,20 @@ elif menu == "🔍 Ürün Analiz":
         if len(event.selection.rows) > 0:
             u = filtrelenmis.iloc[event.selection.rows[0]]
             kar = st.number_input("Hedef Kar %", value=20.0)
+            
+            pazaryerleri = [str(p).strip() for p in genel_df['Pazaryeri Adı'].unique() if str(p).strip() != '']
+            if not pazaryerleri:
+                st.error("Google Tabloda 'Pazaryeri_Kurallari' sekmesinde hiç veri bulamadım!")
+            
             analiz = []
-            for pz in genel_df['Pazaryeri Adı'].unique():
+            for pz in pazaryerleri:
                 res = fiyat_hesapla_v6(u['Marka'], u['Kategori'], sayisal_yap(u['Desi']), sayisal_yap(u['Alış Fiyatı']), sayisal_yap(u['KDV Oranı']), pz, kar)
-                if res[0] > 0: analiz.append({"Pazaryeri": pz, "Fiyat": f"{round(res[0],2)} TL", "Kar": f"{round(res[1],2)} TL", "Kom %": f"%{res[8]}", "Kargo": f"{res[2]} TL", "Kaynak": res[10]})
+                if res[0] > 0: 
+                    analiz.append({"Pazaryeri": pz, "Fiyat": f"{round(res[0],2)} TL", "Kar": f"{round(res[1],2)} TL", "Kom %": f"%{res[8]}", "Kargo": f"{res[2]} TL", "Durum": "✅ Başarılı"})
+                else:
+                    # HATA DURUMUNDA GİZLEMEYİP SEBEBİNİ YAZIYORUZ
+                    analiz.append({"Pazaryeri": pz, "Fiyat": "HATA", "Kar": "-", "Kom %": "-", "Kargo": "-", "Durum": f"❌ {res[10]}"})
+            
             st.table(pd.DataFrame(analiz))
 
 elif menu == "📊 Toplu Liste":
@@ -192,6 +198,7 @@ elif menu == "📊 Toplu Liste":
             if not str(u['Ürün Adı']): continue
             satir = {"SKU": u['Stok Kodu'], "Ürün": u['Ürün Adı']}
             for pz in genel_df['Pazaryeri Adı'].unique():
+                if str(pz).strip() == '': continue
                 res = fiyat_hesapla_v6(u['Marka'], u['Kategori'], sayisal_yap(u['Desi']), sayisal_yap(u['Alış Fiyatı']), sayisal_yap(u['KDV Oranı']), pz, kar_o)
                 satir[pz] = round(res[0], 2) if res[0] > 0 else "Hata"
             toplu.append(satir)
