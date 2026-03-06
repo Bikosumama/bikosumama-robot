@@ -288,7 +288,34 @@ elif menu == "🎯 Ty Kampanya":
 
 elif menu == "⚙️ Veritabanı":
     st.subheader("⚙️ Ham Veri Görüntüleyici")
-    tab1, tab2, tab3 = st.tabs(["Ürünler", "Kurallar", "Kampanya Teklifleri"])
-    with tab1: st.dataframe(urunler_df)
-    with tab2: st.write("Pazaryeri Kuralları"); st.dataframe(genel_df)
-    with tab3: st.dataframe(teklif_df)
+    st.info("Bu ekrandaki veriler Google E-Tablolar'dan anlık çekilmektedir.")
+    
+    # 5 Sekmeli Tam Yapı
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "📦 Ürünler", 
+        "🌍 Genel Kurallar", 
+        "🌟 Özel Kurallar", 
+        "🚚 Kargo Ücretleri", 
+        "🎯 Ty Teklifler"
+    ])
+    
+    with tab1: 
+        st.write("### Kayıtlı Ürün Listesi")
+        st.dataframe(urunler_df, use_container_width=True)
+    
+    with tab2: 
+        st.write("### Pazaryeri Genel Komisyon ve Giderleri")
+        st.dataframe(genel_df, use_container_width=True)
+        
+    with tab3: 
+        st.write("### Marka veya Kategori Bazlı İstisnalar")
+        st.dataframe(ozel_df, use_container_width=True)
+        
+    with tab4: 
+        st.write("### Desi Bazlı Kargo Fiyat Baremleri")
+        st.dataframe(kargo_df, use_container_width=True)
+        
+    with tab5: 
+        st.write("### Trendyol Kampanya Teklif Verileri")
+        st.dataframe(teklif_df, use_container_width=True)
+
