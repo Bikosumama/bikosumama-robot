@@ -43,7 +43,8 @@ def excel_oku(file):
         else:
             return pd.DataFrame(columns=default_cols)
 
-    urunler = sekme_getir("Urunler", ["Stok Kodu", "Barkod", "Marka", "Ürün Adı", "Alış Fiyatı", "KDV Oranı", "Desi", "Kategori", "Rakip Fiyatı"])
+    # Urunler sekmesine 'Min Satış Fiyatı' eklendi!
+    urunler = sekme_getir("Urunler", ["Stok Kodu", "Barkod", "Marka", "Ürün Adı", "Alış Fiyatı", "KDV Oranı", "Desi", "Kategori", "Rakip Fiyatı", "Min Satış Fiyatı"])
     kargo = sekme_getir("Kargo_Fiyatlari", ["Pazaryeri Adı", "Min Desi", "Max Desi", "Kargo Ücreti"])
     genel_kurallar = sekme_getir("Pazaryeri_Kurallari", ["Pazaryeri Adı", "Komisyon Oranı", "Stopaj Oranı", "Platform Hizmet Bedeli", "İşlem Gideri", "Diğer Giderler", "Barem 1 Sınırı (TL)", "Barem 1 Kargo (TL)", "Barem 2 Sınırı (TL)", "Barem 2 Kargo (TL)", "Ücretsiz Kargo Sınırı (TL)"])
     ozel_kurallar = sekme_getir("Ozel_Kurallar", ["Pazaryeri Adı", "Marka", "Kategori", "Komisyon Oranı"])
@@ -53,13 +54,13 @@ def excel_oku(file):
 
 # --- YAN MENÜ VE DOSYA YÜKLEME ---
 st.sidebar.title("🐾 bikosumama ERP")
-st.sidebar.markdown("Sürüm 5.1 (Hafızalı Çevrimdışı Mod)")
+st.sidebar.markdown("Sürüm 6.0 (Firma Taban Fiyat Koruması)")
 
 uploaded_file = st.sidebar.file_uploader("📂 Veritabanı Excel'ini Yükle", type=["xlsx", "xls"])
 
 if uploaded_file is None:
     st.title("🤖 bikosumama | Gelişmiş Fiyatlandırma Paneli")
-    st.info("👈 Lütfen sol menüden Excel dosyanızı yükleyin.")
+    st.info("👈 Lütfen sol menüden Excel dosyanızı yükleyin. (Not: Urunler sekmenize 'Min Satış Fiyatı' sütunu eklemeyi unutmayın!)")
     st.stop()
 
 # Dosya yüklendiyse verileri oku
@@ -70,7 +71,7 @@ except Exception as e:
     st.stop()
 
 # --- HESAPLAMA MOTORLARI ---
-def fiyat_hesapla_v4(marka, kategori, desi, alis, kdv, pz_adi, kar_yuzdesi):
+def fiyat_hesapla_v5(marka, kategori, desi, alis, kdv, pz_adi, kar_yuzdesi, min_fiyat=0.0):
     kargo_ucreti_desi = 0
     pz_kargo = kargo_df[kargo_df['Pazaryeri Adı'].astype(str).str.strip().str.lower() == str(pz_adi).strip().lower()]
     if pz_kargo.empty: pz_kargo = kargo_df[kargo_df['Pazaryeri Adı'].astype(str).str.strip() == 'Genel']
@@ -80,7 +81,7 @@ def fiyat_hesapla_v4(marka, kategori, desi, alis, kdv, pz_adi, kar_yuzdesi):
             break
     
     pz_genel = genel_df[genel_df['Pazaryeri Adı'].astype(str).str.strip().str.lower() == str(pz_adi).strip().lower()]
-    if pz_genel.empty: return 0,0,0,0,0,0,0,0,0, "Hata", "Yok"
+    if pz_genel.empty: return 0,0,0,0,0,0,0,0,0, "Hata", "Yok", 0
     genel_k = pz_genel.iloc[0]
     komisyon = sayisal_yap(genel_k.get('Komisyon Oranı', 0)); kaynak = "🌍 Genel"
 
@@ -97,7 +98,7 @@ def fiyat_hesapla_v4(marka, kategori, desi, alis, kdv, pz_adi, kar_yuzdesi):
     hizmet, islem, diger = sayisal_yap(genel_k.get('Platform Hizmet Bedeli', 0)), sayisal_yap(genel_k.get('İşlem Gideri', 0)), sayisal_yap(genel_k.get('Diğer Giderler', 0))
     efektif_stopaj = stopaj_oran / (1 + (kdv / 100))
     bolen = 1 - komisyon_oran - efektif_stopaj
-    if bolen <= 0: return 0,0,0,0,0,0,0,0,0, "Hata", "Oran Hatası"
+    if bolen <= 0: return 0,0,0,0,0,0,0,0,0, "Hata", "Oran Hatası", 0
 
     def matematik(k_maliyet):
         toplam_sabit = alis + k_maliyet + islem + diger + hizmet
@@ -108,15 +109,47 @@ def fiyat_hesapla_v4(marka, kategori, desi, alis, kdv, pz_adi, kar_yuzdesi):
     b2_s, b2_k = sayisal_yap(genel_k.get('Barem 2 Sınırı (TL)', 0)), sayisal_yap(genel_k.get('Barem 2 Kargo (TL)', 0))
     u_sinir = sayisal_yap(genel_k.get('Ücretsiz Kargo Sınırı (TL)', 0))
 
-    s1, k1 = matematik(b1_k)
-    if b1_s > 0 and s1 <= b1_s: return s1, k1, b1_k, s1*komisyon_oran, s1*efektif_stopaj, hizmet, islem, diger, komisyon, "1. Barem", kaynak
-    s2, k2 = matematik(b2_k)
-    if b2_s > 0 and s2 <= b2_s: return s2, k2, b2_k, s2*komisyon_oran, s2*efektif_stopaj, hizmet, islem, diger, komisyon, "2. Barem", kaynak
-    if u_sinir > 0:
-        s_u, k_u = matematik(0)
-        if s_u < u_sinir: return s_u, k_u, 0, s_u*komisyon_oran, s_u*efektif_stopaj, hizmet, islem, diger, komisyon, "Alıcı Öder", kaynak
-    s_d, k_d = matematik(kargo_ucreti_desi)
-    return s_d, k_d, kargo_ucreti_desi, s_d*komisyon_oran, s_d*efektif_stopaj, hizmet, islem, diger, komisyon, "Desi", kaynak
+    def bul_hedef():
+        s1, k1 = matematik(b1_k)
+        if b1_s > 0 and s1 <= b1_s: return s1, k1, b1_k, "1. Barem"
+        s2, k2 = matematik(b2_k)
+        if b2_s > 0 and s2 <= b2_s: return s2, k2, b2_k, "2. Barem"
+        if u_sinir > 0:
+            s_u, k_u = matematik(0)
+            if s_u < u_sinir: return s_u, k_u, 0, "Alıcı Öder"
+        s_d, k_d = matematik(kargo_ucreti_desi)
+        return s_d, k_d, kargo_ucreti_desi, "Desi"
+
+    s_hedef, k_hedef, kg_hedef, b_isim = bul_hedef()
+    gerceklesecek_kar_yuzdesi = kar_yuzdesi
+
+    # 🛑 FİRMA TABAN FİYAT KURALI KONTROLÜ
+    if min_fiyat > 0 and s_hedef < min_fiyat:
+        s_hedef = min_fiyat
+        b_isim = "Desi"
+        kg_hedef = kargo_ucreti_desi
+        
+        # Taban fiyata çıkınca kargo baremi değişiyor mu kontrol edelim
+        if b1_s > 0 and s_hedef <= b1_s: 
+            kg_hedef = b1_k; b_isim = "1. Barem"
+        elif b2_s > 0 and s_hedef <= b2_s: 
+            kg_hedef = b2_k; b_isim = "2. Barem"
+        elif u_sinir > 0 and s_hedef < u_sinir: 
+            kg_hedef = 0; b_isim = "Alıcı Öder"
+            
+        kom_t = s_hedef * komisyon_oran
+        stp_t = s_hedef * efektif_stopaj
+        tm = alis + kg_hedef + islem + diger + hizmet + kom_t + stp_t
+        k_hedef = s_hedef - tm
+        
+        taban = alis + kg_hedef + islem + diger + hizmet
+        gerceklesecek_kar_yuzdesi = (k_hedef / taban) * 100 if taban > 0 else 0
+        kaynak = "🚨 Firm. Min. Fiyat Kuralı"
+
+    kom_tutar = s_hedef * komisyon_oran
+    stp_tutar = s_hedef * efektif_stopaj
+
+    return s_hedef, k_hedef, kg_hedef, kom_tutar, stp_tutar, hizmet, islem, diger, komisyon, b_isim, kaynak, gerceklesecek_kar_yuzdesi
 
 def kampanya_analiz_motoru(desi, alis, kdv, teklif_fiyat, teklif_komisyon, pz_adi="Trendyol"):
     kargo_ucreti = 0
@@ -207,38 +240,52 @@ elif menu == "🔍 Ürün Arama & Analiz":
         mask = (urunler_df['Ürün Adı'].astype(str).str.contains(arama_metni, case=False) | 
                 urunler_df['Stok Kodu'].astype(str).str.contains(arama_metni, case=False) |
                 urunler_df['Barkod'].astype(str).str.contains(arama_metni, case=False))
-        gosterim_sutunlari = ['Stok Kodu', 'Barkod', 'Marka', 'Ürün Adı', 'Alış Fiyatı']
     else:
         mask = (urunler_df['Ürün Adı'].astype(str).str.contains(arama_metni, case=False) | 
                 urunler_df['Stok Kodu'].astype(str).str.contains(arama_metni, case=False))
-        gosterim_sutunlari = ['Stok Kodu', 'Marka', 'Ürün Adı', 'Alış Fiyatı']
         
     filtrelenmis_df = urunler_df[mask]
     
     if arama_metni != "":
+        gosterim_sutunlari = ['Stok Kodu', 'Marka', 'Ürün Adı', 'Alış Fiyatı']
+        if 'Barkod' in urunler_df.columns: gosterim_sutunlari.insert(1, 'Barkod')
+        if 'Min Satış Fiyatı' in urunler_df.columns: gosterim_sutunlari.append('Min Satış Fiyatı')
+
         event = st.dataframe(filtrelenmis_df[gosterim_sutunlari], use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row")
+        
         if len(event.selection.rows) > 0:
             u = filtrelenmis_df.iloc[event.selection.rows[0]]
             
             st.markdown("### 💰 Kâr Marjı Hedefi ile Satış Fiyatı Bulma")
-            # Hafızalı Arama Hedef Karı
             if "arama_hedef_kar" not in st.session_state: st.session_state.arama_hedef_kar = 20.0
             kar = st.number_input("Hedef Net Kar Marjı (%)", min_value=0.0, step=0.5, key="arama_hedef_kar")
             
+            firma_min_fiyat = sayisal_yap(u.get('Min Satış Fiyatı', 0))
+            if firma_min_fiyat > 0:
+                st.warning(f"⚠️ **DİKKAT:** Bu ürün için firma taban fiyatı **{firma_min_fiyat} TL** olarak belirlenmiş. Sistem fiyatın bu rakamın altına düşmesine izin vermeyecektir.")
+
             analiz_data = []
             for pz in genel_df['Pazaryeri Adı'].unique():
-                res = fiyat_hesapla_v4(u['Marka'], u['Kategori'], sayisal_yap(u['Desi']), sayisal_yap(u['Alış Fiyatı']), sayisal_yap(u['KDV Oranı']), pz, kar)
-                s, k, kg, km_t, stp, hiz, isl, dgr, km_y, ntu, kay = res
+                res = fiyat_hesapla_v5(u['Marka'], u['Kategori'], sayisal_yap(u['Desi']), sayisal_yap(u['Alış Fiyatı']), sayisal_yap(u['KDV Oranı']), pz, kar, firma_min_fiyat)
+                s, k, kg, km_t, stp, hiz, isl, dgr, km_y, b_isim, kay, gercek_kar = res
+                
                 if s > 0:
                     analiz_data.append({
                         "Pazaryeri": pz, 
                         "SATIŞ FİYATI": f"{round(s, 2)} TL", 
                         "NET KAR (TL)": f"{round(k, 2)} TL", 
-                        "Komisyon (%)": f"%{km_y}",
+                        "Gerçekleşen Kâr (%)": f"%{round(gercek_kar, 1)}",
+                        "Komisyon Oranı": f"%{km_y}",
                         "Kargo Gideri": f"{round(kg, 2)} TL", 
-                        "Komisyon (TL)": f"{round(km_t, 2)} TL", 
+                        "Kural Kaynağı": kay
                     })
-            st.table(pd.DataFrame(analiz_data))
+            
+            # Tabloyu renklendir (Firm taban fiyatı devreye girdiyse kaynağı kırmızı/kalın yap)
+            def kural_renk(val):
+                if isinstance(val, str) and '🚨 Firm.' in val: return 'color: red; font-weight: bold;'
+                return ''
+                
+            st.dataframe(pd.DataFrame(analiz_data).style.map(kural_renk, subset=['Kural Kaynağı']), use_container_width=True)
             
             st.markdown("---")
             st.markdown("### ⚔️ Rekabet Analizi (Rakip Fiyatına İnersem Ne Olur?)")
@@ -296,7 +343,6 @@ elif menu == "📊 Toplu Liste":
     
     kategori_karlari = {}
     
-    # Hafızalı Global ve Varsayılan Kârlar
     if "global_kar_hafiza" not in st.session_state: st.session_state.global_kar_hafiza = 20.0
     if "varsayilan_kar_hafiza" not in st.session_state: st.session_state.varsayilan_kar_hafiza = 20.0
     
@@ -311,12 +357,9 @@ elif menu == "📊 Toplu Liste":
                 if i + j < len(kategoriler):
                     kat = kategoriler[i + j]
                     key_ismi = f"hafiza_kar_{kat}"
-                    # O kategori için hafıza yoksa 20.0'den başlat
                     if key_ismi not in st.session_state: st.session_state[key_ismi] = 20.0
-                    
                     with cols[j]:
                         kategori_karlari[kat] = st.number_input(f"{kat} (%)", min_value=0.0, max_value=100.0, step=0.5, key=key_ismi)
-                        
         varsayilan_kar = st.number_input("Kategorisi Boş Olanlar İçin Kar (%)", min_value=0.0, max_value=100.0, step=0.5, key="varsayilan_kar_hafiza")
     
     st.markdown("---")
@@ -333,15 +376,17 @@ elif menu == "📊 Toplu Liste":
                     aktif_kar = kategori_karlari.get(kat_ismi, varsayilan_kar)
 
                 barkod_metni = urun.get('Barkod', '') if 'Barkod' in urun else ''
+                firma_min_fiyat = sayisal_yap(urun.get('Min Satış Fiyatı', 0))
+                
                 satir = {
                     "Barkod": barkod_metni,
                     "Stok Kodu": urun['Stok Kodu'], 
                     "Ürün": urun['Ürün Adı'], 
-                    "Uygulanan Kar": f"%{aktif_kar}"
+                    "Hedef Kar": f"%{aktif_kar}"
                 }
                 
                 for pz in p_yerleri:
-                    res_t = fiyat_hesapla_v4(urun['Marka'], urun['Kategori'], sayisal_yap(urun['Desi']), sayisal_yap(urun['Alış Fiyatı']), sayisal_yap(urun['KDV Oranı']), pz, aktif_kar)
+                    res_t = fiyat_hesapla_v5(urun['Marka'], urun['Kategori'], sayisal_yap(urun['Desi']), sayisal_yap(urun['Alış Fiyatı']), sayisal_yap(urun['KDV Oranı']), pz, aktif_kar, firma_min_fiyat)
                     satir[pz] = round(res_t[0], 2) if res_t[0] > 0 else "HATA"
                 toplu_data.append(satir)
             
@@ -359,9 +404,7 @@ elif menu == "📊 Toplu Liste":
 
 elif menu == "🎯 Ty Kampanya Simülatörü":
     st.subheader("🎯 Trendyol Fırsat Merkezi Süzgeci")
-    st.markdown("Google Tablodaki `Trendyol_Teklifler` sekmesine yapıştırdığınız kademeli fiyat/komisyon tekliflerini analiz eder.")
     
-    # Hafızalı Kampanya Süzgeci Karı
     if "kampanya_min_kar_hafiza" not in st.session_state: st.session_state.kampanya_min_kar_hafiza = 10.0
     min_kar_hedefi = st.number_input("Süzgeç: Kabul Edilebilir Minimum Kâr Marjı (%)", min_value=0.0, step=0.5, key="kampanya_min_kar_hafiza")
     
@@ -373,10 +416,8 @@ elif menu == "🎯 Ty Kampanya Simülatörü":
                 analiz_sonuclari = []
                 
                 urunler_stok_temiz = urunler_df['Stok Kodu'].apply(temiz_kod)
-                if 'Barkod' in urunler_df.columns:
-                    urunler_barkod_temiz = urunler_df['Barkod'].apply(temiz_kod)
-                else:
-                    urunler_barkod_temiz = pd.Series([''] * len(urunler_df), index=urunler_df.index)
+                if 'Barkod' in urunler_df.columns: urunler_barkod_temiz = urunler_df['Barkod'].apply(temiz_kod)
+                else: urunler_barkod_temiz = pd.Series([''] * len(urunler_df), index=urunler_df.index)
                 
                 for _, teklif in teklif_df.iterrows():
                     stok_kodu = temiz_kod(teklif.get('Stok Kodu', ''))
@@ -393,6 +434,7 @@ elif menu == "🎯 Ty Kampanya Simülatörü":
                     desi = sayisal_yap(u.get('Desi', 0))
                     alis = sayisal_yap(u.get('Alış Fiyatı', 0))
                     kdv = sayisal_yap(u.get('KDV Oranı', 20))
+                    firma_min_fiyat = sayisal_yap(u.get('Min Satış Fiyatı', 0))
                     
                     satir = {
                         "Barkod": barkod_teklif if barkod_teklif else u.get('Barkod', ''),
@@ -408,8 +450,14 @@ elif menu == "🎯 Ty Kampanya Simülatörü":
                         if t_fiyat > 0:
                             teklif_gecerli_mi = True
                             kar_tl, kar_yuzde = kampanya_analiz_motoru(desi, alis, kdv, t_fiyat, t_komisyon)
-                            if kar_yuzde >= min_kar_hedefi: satir[f"Teklif {i}"] = f"✅ KABUL (Kar: %{round(kar_yuzde, 1)})"
-                            else: satir[f"Teklif {i}"] = f"❌ RED (Kar: %{round(kar_yuzde, 1)})"
+                            
+                            # EĞER FİRMA TABAN FİYATI VARSA VE KAMPANYA FİYATI BUNUN ALTINDAYSA DİREKT REDDET
+                            if firma_min_fiyat > 0 and t_fiyat < firma_min_fiyat:
+                                satir[f"Teklif {i}"] = f"❌ RED (FİRMA KURALI İHLALİ)"
+                            elif kar_yuzde >= min_kar_hedefi: 
+                                satir[f"Teklif {i}"] = f"✅ KABUL (Kar: %{round(kar_yuzde, 1)})"
+                            else: 
+                                satir[f"Teklif {i}"] = f"❌ RED (Kar: %{round(kar_yuzde, 1)})"
                         else: satir[f"Teklif {i}"] = "-"
                     
                     if teklif_gecerli_mi: analiz_sonuclari.append(satir)
