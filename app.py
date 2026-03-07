@@ -43,7 +43,8 @@ def excel_oku(file):
         else:
             return pd.DataFrame(columns=default_cols)
 
-    urunler = sekme_getir("Urunler", ["Stok Kodu", "Barkod", "Marka", "Ürün Adı", "Alış Fiyatı", "KDV Oranı", "Desi", "Kategori"])
+    # Urunler sekmesine Rakip Fiyatı eklendi (Opsiyonel)
+    urunler = sekme_getir("Urunler", ["Stok Kodu", "Barkod", "Marka", "Ürün Adı", "Alış Fiyatı", "KDV Oranı", "Desi", "Kategori", "Rakip Fiyatı"])
     kargo = sekme_getir("Kargo_Fiyatlari", ["Pazaryeri Adı", "Min Desi", "Max Desi", "Kargo Ücreti"])
     genel_kurallar = sekme_getir("Pazaryeri_Kurallari", ["Pazaryeri Adı", "Komisyon Oranı", "Stopaj Oranı", "Platform Hizmet Bedeli", "İşlem Gideri", "Diğer Giderler", "Barem 1 Sınırı (TL)", "Barem 1 Kargo (TL)", "Barem 2 Sınırı (TL)", "Barem 2 Kargo (TL)", "Ücretsiz Kargo Sınırı (TL)"])
     ozel_kurallar = sekme_getir("Ozel_Kurallar", ["Pazaryeri Adı", "Marka", "Kategori", "Komisyon Oranı"])
@@ -53,13 +54,14 @@ def excel_oku(file):
 
 # --- YAN MENÜ VE DOSYA YÜKLEME ---
 st.sidebar.title("🐾 bikosumama ERP")
-st.sidebar.markdown("Sürüm 4.0 (Çevrimdışı Excel Modu)")
+st.sidebar.markdown("Sürüm 5.0 (Görsel & Rekabet Modu)")
 
 uploaded_file = st.sidebar.file_uploader("📂 Veritabanı Excel'ini Yükle", type=["xlsx", "xls"])
 
 if uploaded_file is None:
     st.title("🤖 bikosumama | Gelişmiş Fiyatlandırma Paneli")
-    st.info("👈 Lütfen sol menüden içinde 'Urunler', 'Kargo_Fiyatlari', 'Pazaryeri_Kurallari', 'Ozel_Kurallar' ve 'Trendyol_Teklifler' sekmeleri bulunan Excel dosyanızı yükleyin.")
+    st.info("👈 Lütfen sol menüden Excel dosyanızı yükleyin.")
+    
     st.stop()
 
 # Dosya yüklendiyse verileri oku
@@ -118,10 +120,8 @@ def fiyat_hesapla_v4(marka, kategori, desi, alis, kdv, pz_adi, kar_yuzdesi):
     s_d, k_d = matematik(kargo_ucreti_desi)
     return s_d, k_d, kargo_ucreti_desi, s_d*komisyon_oran, s_d*efektif_stopaj, hizmet, islem, diger, komisyon, "Desi", kaynak
 
-def kampanya_analiz_motoru(desi, alis, kdv, teklif_fiyat, teklif_komisyon):
-    pz_adi = "Trendyol"
+def kampanya_analiz_motoru(desi, alis, kdv, teklif_fiyat, teklif_komisyon, pz_adi="Trendyol"):
     kargo_ucreti = 0
-    
     pz_kargo = kargo_df[kargo_df['Pazaryeri Adı'].astype(str).str.strip().str.lower() == pz_adi.lower()]
     if pz_kargo.empty: pz_kargo = kargo_df[kargo_df['Pazaryeri Adı'].astype(str).str.strip() == 'Genel']
     for _, row in pz_kargo.iterrows():
@@ -139,9 +139,12 @@ def kampanya_analiz_motoru(desi, alis, kdv, teklif_fiyat, teklif_komisyon):
     
     b1_s, b1_k = sayisal_yap(genel_k.get('Barem 1 Sınırı (TL)', 0)), sayisal_yap(genel_k.get('Barem 1 Kargo (TL)', 0))
     b2_s, b2_k = sayisal_yap(genel_k.get('Barem 2 Sınırı (TL)', 0)), sayisal_yap(genel_k.get('Barem 2 Kargo (TL)', 0))
+    u_sinir = sayisal_yap(genel_k.get('Ücretsiz Kargo Sınırı (TL)', 0))
+    
+    uygulanan_kargo = kargo_ucreti
     if b1_s > 0 and teklif_fiyat <= b1_s: uygulanan_kargo = b1_k
     elif b2_s > 0 and teklif_fiyat <= b2_s: uygulanan_kargo = b2_k
-    else: uygulanan_kargo = kargo_ucreti
+    elif u_sinir > 0 and teklif_fiyat >= u_sinir: uygulanan_kargo = 0 # Alıcı öder kuralı
 
     komisyon_tutari = teklif_fiyat * (teklif_komisyon / 100)
     efektif_stopaj = stopaj_oran / (1 + (kdv / 100))
@@ -156,8 +159,15 @@ def kampanya_analiz_motoru(desi, alis, kdv, teklif_fiyat, teklif_komisyon):
     
     return net_kar_tl, net_kar_yuzde
 
+# Rakamları renklendirmek için Pandas Styler fonksiyonları
+def renk_karari(val):
+    if isinstance(val, str):
+        if '✅ KABUL' in val: return 'background-color: #d4edda; color: #155724; font-weight: bold;'
+        elif '❌ RED' in val: return 'background-color: #f8d7da; color: #721c24; font-weight: bold;'
+    return ''
+
 # --- ARAYÜZ ---
-menu = st.sidebar.radio("MENÜ", ["🔍 Ürün Arama & Analiz", "📊 Toplu Liste", "🎯 Ty Kampanya Simülatörü", "⚙️ Veritabanı"])
+menu = st.sidebar.radio("MENÜ", ["📈 Dashboard", "🔍 Ürün Arama & Analiz", "📊 Toplu Liste", "🎯 Ty Kampanya Simülatörü", "⚙️ Veritabanı"])
 st.sidebar.markdown("---")
 if st.sidebar.button("🚪 Sistemden Çıkış Yap"):
     st.session_state.giris_yapildi = False; st.rerun()
@@ -165,7 +175,40 @@ if st.sidebar.button("🚪 Sistemden Çıkış Yap"):
 st.title("🤖 bikosumama | Gelişmiş Fiyatlandırma Paneli")
 st.markdown("---")
 
-if menu == "🔍 Ürün Arama & Analiz":
+if menu == "📈 Dashboard":
+    st.subheader("📊 Operasyonel Genel Bakış")
+    
+    # Üst Metrikler
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("📦 Toplam Ürün Sayısı", len(urunler_df[urunler_df['Stok Kodu'] != '']))
+    col2.metric("🏪 Aktif Pazaryeri", len(genel_df[genel_df['Pazaryeri Adı'] != '']))
+    
+    kategoriler = urunler_df[urunler_df['Kategori'] != '']['Kategori'].nunique()
+    markalar = urunler_df[urunler_df['Marka'] != '']['Marka'].nunique()
+    col3.metric("📁 Kategori Sayısı", kategoriler)
+    col4.metric("🌟 Marka Sayısı", markalar)
+    
+    st.markdown("---")
+    
+    # Grafikler
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown("**📁 Kategorilere Göre Ürün Dağılımı**")
+        kat_dagilim = urunler_df[urunler_df['Kategori'] != '']['Kategori'].value_counts()
+        if not kat_dagilim.empty:
+            st.bar_chart(kat_dagilim, color="#ffaa00")
+        else:
+            st.info("Kategori verisi bulunamadı.")
+            
+    with c2:
+        st.markdown("**🌟 Markalara Göre Ürün Dağılımı**")
+        marka_dagilim = urunler_df[urunler_df['Marka'] != '']['Marka'].value_counts().head(10) # İlk 10 marka
+        if not marka_dagilim.empty:
+            st.bar_chart(marka_dagilim, color="#00aaff")
+        else:
+            st.info("Marka verisi bulunamadı.")
+
+elif menu == "🔍 Ürün Arama & Analiz":
     st.subheader("🔍 Hızlı Ürün Arama & Detaylı Analiz")
     arama_metni = st.text_input("Aramak için yazın...", placeholder="Örn: Pro Plan, 101...")
     
@@ -185,6 +228,8 @@ if menu == "🔍 Ürün Arama & Analiz":
         event = st.dataframe(filtrelenmis_df[gosterim_sutunlari], use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row")
         if len(event.selection.rows) > 0:
             u = filtrelenmis_df.iloc[event.selection.rows[0]]
+            
+            st.markdown("### 💰 Kâr Marjı Hedefi ile Satış Fiyatı Bulma")
             kar = st.number_input("Hedef Net Kar Marjı (%)", min_value=0.0, value=20.0, step=0.5)
             analiz_data = []
             for pz in genel_df['Pazaryeri Adı'].unique():
@@ -196,11 +241,65 @@ if menu == "🔍 Ürün Arama & Analiz":
                         "SATIŞ FİYATI": f"{round(s, 2)} TL", 
                         "NET KAR (TL)": f"{round(k, 2)} TL", 
                         "Komisyon (%)": f"%{km_y}",
-                        "Kargo Gideri": f"{round(kg, 2)} ({ntu})", 
+                        "Kargo Gideri": f"{round(kg, 2)} TL", 
                         "Komisyon (TL)": f"{round(km_t, 2)} TL", 
-                        "Kural Kaynağı": kay
                     })
             st.table(pd.DataFrame(analiz_data))
+            
+            # YENİ ÖZELLİK: RAKİP FİYATI / SABİT FİYAT ANALİZİ
+            st.markdown("---")
+            st.markdown("### ⚔️ Rekabet Analizi (Rakip Fiyatına İnersem Ne Olur?)")
+            
+            # Excel'de "Rakip Fiyatı" sütunu varsa otomatik getir, yoksa manuel girilsin
+            varsayilan_rakip_fiyati = 0.0
+            if 'Rakip Fiyatı' in u and sayisal_yap(u['Rakip Fiyatı']) > 0:
+                varsayilan_rakip_fiyati = sayisal_yap(u['Rakip Fiyatı'])
+                st.info(f"Excel'den çekilen Rakip Fiyatı: **{varsayilan_rakip_fiyati} TL**")
+                
+            rakip_fiyati = st.number_input("Piyasa / Rakip Satış Fiyatı (TL)", min_value=0.0, value=varsayilan_rakip_fiyati, step=1.0)
+            
+            if rakip_fiyati > 0:
+                rekabet_data = []
+                for pz in genel_df['Pazaryeri Adı'].unique():
+                    if str(pz).strip() == '': continue
+                    # İlgili pazaryerinin komisyonunu çekmek için kural arama
+                    komisyon = 0
+                    pz_genel = genel_df[genel_df['Pazaryeri Adı'].astype(str).str.strip().str.lower() == str(pz).strip().lower()]
+                    if not pz_genel.empty:
+                        komisyon = sayisal_yap(pz_genel.iloc[0].get('Komisyon Oranı', 0))
+                        
+                    # Marka / Kategori özel komisyonu var mı?
+                    pz_ozel = ozel_df[ozel_df['Pazaryeri Adı'].astype(str).str.strip().str.lower() == str(pz).strip().lower()]
+                    marka_o = pz_ozel[pz_ozel['Marka'].astype(str).str.strip().str.lower() == str(u['Marka']).strip().lower()]
+                    if not marka_o.empty and str(marka_o.iloc[0]['Komisyon Oranı']).strip() != '':
+                        komisyon = sayisal_yap(marka_o.iloc[0]['Komisyon Oranı'])
+                    else:
+                        kat_o = pz_ozel[pz_ozel['Kategori'].astype(str).str.strip().str.lower() == str(u['Kategori']).strip().lower()]
+                        if not kat_o.empty and str(kat_o.iloc[0]['Komisyon Oranı']).strip() != '':
+                            komisyon = sayisal_yap(kat_o.iloc[0]['Komisyon Oranı'])
+                    
+                    r_kar_tl, r_kar_yuzde = kampanya_analiz_motoru(sayisal_yap(u['Desi']), sayisal_yap(u['Alış Fiyatı']), sayisal_yap(u['KDV Oranı']), rakip_fiyati, komisyon, pz)
+                    
+                    durum = "🟢 KÂRLI" if r_kar_yuzde >= kar else ("🔴 ZARAR / ÇOK DÜŞÜK" if r_kar_yuzde < 5 else "🟠 RİSKLİ")
+                    rekabet_data.append({
+                        "Pazaryeri": pz,
+                        "Satış Fiyatı": f"{rakip_fiyati} TL",
+                        "Gerçekleşen Net Kâr (%)": f"%{round(r_kar_yuzde, 2)}",
+                        "Gerçekleşen Net Kâr (TL)": f"{round(r_kar_tl, 2)} TL",
+                        "Durum": durum
+                    })
+                
+                # Renklendirme fonksiyonu
+                def rekabet_renk(val):
+                    if isinstance(val, str):
+                        if '🟢' in val: return 'background-color: #d4edda; color: green; font-weight: bold;'
+                        elif '🔴' in val: return 'background-color: #f8d7da; color: red; font-weight: bold;'
+                        elif '🟠' in val: return 'background-color: #fff3cd; color: orange; font-weight: bold;'
+                    return ''
+                    
+                df_rekabet = pd.DataFrame(rekabet_data)
+                st.dataframe(df_rekabet.style.map(rekabet_renk, subset=['Durum']), use_container_width=True)
+
     else: st.info("👆 Başlamak için ürün adı, stok kodu veya barkod yazın.")
 
 elif menu == "📊 Toplu Liste":
@@ -243,18 +342,22 @@ elif menu == "📊 Toplu Liste":
                     "Barkod": barkod_metni,
                     "Stok Kodu": urun['Stok Kodu'], 
                     "Ürün": urun['Ürün Adı'], 
-                    "Kategori": urun['Kategori'], 
-                    "Uygulanan Kar": f"%{aktif_kar}", 
-                    "Maliyet": urun['Alış Fiyatı']
+                    "Uygulanan Kar": f"%{aktif_kar}"
                 }
                 
                 for pz in p_yerleri:
                     res_t = fiyat_hesapla_v4(urun['Marka'], urun['Kategori'], sayisal_yap(urun['Desi']), sayisal_yap(urun['Alış Fiyatı']), sayisal_yap(urun['KDV Oranı']), pz, aktif_kar)
-                    satir[pz] = round(res_t[0], 2) if res_t[0] > 0 else "Hata"
+                    satir[pz] = round(res_t[0], 2) if res_t[0] > 0 else "HATA"
                 toplu_data.append(satir)
             
             df_toplu = pd.DataFrame(toplu_data)
-            st.dataframe(df_toplu, use_container_width=True)
+            
+            # HATA metnini kırmızıya boyama
+            def hata_boya(val):
+                if val == 'HATA': return 'color: red; font-weight: bold; background-color: #ffe6e6;'
+                return ''
+                
+            st.dataframe(df_toplu.style.map(hata_boya), use_container_width=True)
             
             buf = io.BytesIO()
             with pd.ExcelWriter(buf, engine='xlsxwriter') as wr: df_toplu.to_excel(wr, index=False, sheet_name='Toplu_Fiyatlar')
@@ -262,6 +365,7 @@ elif menu == "📊 Toplu Liste":
 
 elif menu == "🎯 Ty Kampanya Simülatörü":
     st.subheader("🎯 Trendyol Fırsat Merkezi Süzgeci")
+    st.markdown("Google Tablodaki `Trendyol_Teklifler` sekmesine yapıştırdığınız kademeli fiyat/komisyon tekliflerini analiz eder.")
     min_kar_hedefi = st.number_input("Süzgeç: Kabul Edilebilir Minimum Kâr Marjı (%)", min_value=0.0, value=10.0, step=0.5)
     
     if st.button("🚀 Teklifleri Analiz Et"):
@@ -307,15 +411,18 @@ elif menu == "🎯 Ty Kampanya Simülatörü":
                         if t_fiyat > 0:
                             teklif_gecerli_mi = True
                             kar_tl, kar_yuzde = kampanya_analiz_motoru(desi, alis, kdv, t_fiyat, t_komisyon)
-                            if kar_yuzde >= min_kar_hedefi: satir[f"Teklif {i} Kararı"] = f"✅ KABUL (Kar: %{round(kar_yuzde, 1)} | {round(kar_tl, 2)} TL)"
-                            else: satir[f"Teklif {i} Kararı"] = f"❌ RED (Kar: %{round(kar_yuzde, 1)} | {round(kar_tl, 2)} TL)"
-                        else: satir[f"Teklif {i} Kararı"] = "-"
+                            if kar_yuzde >= min_kar_hedefi: satir[f"Teklif {i}"] = f"✅ KABUL (Kar: %{round(kar_yuzde, 1)})"
+                            else: satir[f"Teklif {i}"] = f"❌ RED (Kar: %{round(kar_yuzde, 1)})"
+                        else: satir[f"Teklif {i}"] = "-"
                     
                     if teklif_gecerli_mi: analiz_sonuclari.append(satir)
                 
                 if len(analiz_sonuclari) > 0:
                     df_analiz = pd.DataFrame(analiz_sonuclari)
-                    st.dataframe(df_analiz, use_container_width=True)
+                    
+                    # Renklendirme Stillerinin Uygulanması
+                    st.dataframe(df_analiz.style.map(renk_karari, subset=['Teklif 1', 'Teklif 2', 'Teklif 3']), use_container_width=True)
+                    
                     buf = io.BytesIO()
                     with pd.ExcelWriter(buf, engine='xlsxwriter') as wr: df_analiz.to_excel(wr, index=False, sheet_name='Kampanya_Karari')
                     st.download_button("📥 Onay/Red Listesini Excel İndir", data=buf.getvalue(), file_name="Trendyol_Kampanya_Kararlari.xlsx")
