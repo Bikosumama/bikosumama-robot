@@ -28,6 +28,13 @@ def sayisal_yap(deger):
     try: return float(deger)
     except: return 0.0
 
+# Stok kodu ve barkodlardaki .0 uzantılarını ve boşlukları temizleyen özel fonksiyon
+def temiz_kod(deger):
+    d = str(deger).strip()
+    if d.endswith('.0'): return d[:-2]
+    if d.lower() == 'nan': return ''
+    return d
+
 @st.cache_data(ttl=30)
 def veri_getir():
     try:
@@ -37,9 +44,9 @@ def veri_getir():
         genel_kurallar = pd.read_csv(base_url + "Pazaryeri_Kurallari")
         ozel_kurallar = pd.read_csv(base_url + "Ozel_Kurallar")
         
-        # Teklifler Sekmesini Çek
+        # Teklifler Sekmesini Çek (Barkod sütunu varsayılanlara eklendi)
         try: teklifler = pd.read_csv(base_url + "Trendyol_Teklifler")
-        except: teklifler = pd.DataFrame(columns=['Stok Kodu', 'Teklif 1 Fiyat', 'Teklif 1 Komisyon', 'Teklif 2 Fiyat', 'Teklif 2 Komisyon', 'Teklif 3 Fiyat', 'Teklif 3 Komisyon'])
+        except: teklifler = pd.DataFrame(columns=['Barkod', 'Stok Kodu', 'Teklif 1 Fiyat', 'Teklif 1 Komisyon', 'Teklif 2 Fiyat', 'Teklif 2 Komisyon', 'Teklif 3 Fiyat', 'Teklif 3 Komisyon'])
 
         for df in [urunler, kargo, genel_kurallar, ozel_kurallar, teklifler]:
             df.columns = df.columns.str.strip()
@@ -147,10 +154,21 @@ if urunler_df is not None:
     if menu == "🔍 Ürün Arama & Analiz":
         st.subheader("🔍 Hızlı Ürün Arama & Detaylı Analiz")
         arama_metni = st.text_input("Aramak için yazın...", placeholder="Örn: Pro Plan, 101...")
-        mask = (urunler_df['Ürün Adı'].astype(str).str.contains(arama_metni, case=False) | urunler_df['Stok Kodu'].astype(str).str.contains(arama_metni, case=False))
+        
+        if 'Barkod' in urunler_df.columns:
+            mask = (urunler_df['Ürün Adı'].astype(str).str.contains(arama_metni, case=False) | 
+                    urunler_df['Stok Kodu'].astype(str).str.contains(arama_metni, case=False) |
+                    urunler_df['Barkod'].astype(str).str.contains(arama_metni, case=False))
+            gosterim_sutunlari = ['Stok Kodu', 'Barkod', 'Marka', 'Ürün Adı', 'Alış Fiyatı']
+        else:
+            mask = (urunler_df['Ürün Adı'].astype(str).str.contains(arama_metni, case=False) | 
+                    urunler_df['Stok Kodu'].astype(str).str.contains(arama_metni, case=False))
+            gosterim_sutunlari = ['Stok Kodu', 'Marka', 'Ürün Adı', 'Alış Fiyatı']
+            
         filtrelenmis_df = urunler_df[mask]
+        
         if arama_metni != "":
-            event = st.dataframe(filtrelenmis_df[['Stok Kodu', 'Marka', 'Ürün Adı', 'Alış Fiyatı']], use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row")
+            event = st.dataframe(filtrelenmis_df[gosterim_sutunlari], use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row")
             if len(event.selection.rows) > 0:
                 u = filtrelenmis_df.iloc[event.selection.rows[0]]
                 kar = st.number_input("Hedef Net Kar Marjı (%)", min_value=0.0, value=20.0, step=0.5)
@@ -169,7 +187,7 @@ if urunler_df is not None:
                             "Kural Kaynağı": kay
                         })
                 st.table(pd.DataFrame(analiz_data))
-        else: st.info("👆 Başlamak için ürün adı veya stok kodu yazın.")
+        else: st.info("👆 Başlamak için ürün adı, stok kodu veya barkod yazın.")
 
     elif menu == "📊 Toplu Liste":
         st.subheader("📋 Dinamik Toplu Fiyat Listesi")
@@ -206,7 +224,16 @@ if urunler_df is not None:
                         kat_ismi = str(urun.get('Kategori', '')).strip()
                         aktif_kar = kategori_karlari.get(kat_ismi, varsayilan_kar)
 
-                    satir = {"Stok Kodu": urun['Stok Kodu'], "Ürün": urun['Ürün Adı'], "Kategori": urun['Kategori'], "Uygulanan Kar": f"%{aktif_kar}", "Maliyet": urun['Alış Fiyatı']}
+                    barkod_metni = urun.get('Barkod', '') if 'Barkod' in urun else ''
+                    satir = {
+                        "Barkod": barkod_metni,
+                        "Stok Kodu": urun['Stok Kodu'], 
+                        "Ürün": urun['Ürün Adı'], 
+                        "Kategori": urun['Kategori'], 
+                        "Uygulanan Kar": f"%{aktif_kar}", 
+                        "Maliyet": urun['Alış Fiyatı']
+                    }
+                    
                     for pz in p_yerleri:
                         res_t = fiyat_hesapla_v4(urun['Marka'], urun['Kategori'], sayisal_yap(urun['Desi']), sayisal_yap(urun['Alış Fiyatı']), sayisal_yap(urun['KDV Oranı']), pz, aktif_kar)
                         satir[pz] = round(res_t[0], 2) if res_t[0] > 0 else "Hata"
@@ -221,24 +248,41 @@ if urunler_df is not None:
 
     elif menu == "🎯 Ty Kampanya Simülatörü":
         st.subheader("🎯 Trendyol Fırsat Merkezi Süzgeci")
-        st.markdown("Google Tablodaki `Trendyol_Teklifler` sekmesine yapıştırdığınız kademeli fiyat/komisyon tekliflerini analiz eder. **Sadece belirlediğiniz kâr marjının üstünde kalan teklifleri onaylar.**")
+        st.markdown("Google Tablodaki `Trendyol_Teklifler` sekmesine yapıştırdığınız kademeli fiyat/komisyon tekliflerini analiz eder.")
         min_kar_hedefi = st.number_input("Süzgeç: Kabul Edilebilir Minimum Kâr Marjı (%)", min_value=0.0, value=10.0, step=0.5)
         
         if st.button("🚀 Teklifleri Analiz Et"):
             if teklif_df.empty or len(teklif_df) == 0:
                 st.warning("⚠️ Trendyol_Teklifler sekmesinde veri bulunamadı.")
             else:
-                with st.spinner('Teklifler Süzgeçten Geçiriliyor...'):
+                with st.spinner('Teklifler Süzgeçten Geçiriliyor... Akıllı Eşleştirme Aktif!'):
                     analiz_sonuclari = []
                     
-                    # Güvenli Stok Kodu Eşleştirmesi (101 vs 101.0 hatasını önler)
-                    urunler_stok_temiz = urunler_df['Stok Kodu'].astype(str).str.replace('.0', '', regex=False).str.strip()
+                    # Ürünler tablosundaki kodları eşleşmeye hazır hale getirelim
+                    urunler_stok_temiz = urunler_df['Stok Kodu'].apply(temiz_kod)
+                    if 'Barkod' in urunler_df.columns:
+                        urunler_barkod_temiz = urunler_df['Barkod'].apply(temiz_kod)
+                    else:
+                        urunler_barkod_temiz = pd.Series([''] * len(urunler_df), index=urunler_df.index)
                     
                     for _, teklif in teklif_df.iterrows():
-                        stok_kodu = str(teklif.get('Stok Kodu', '')).replace('.0', '', 1).strip()
-                        if not stok_kodu or stok_kodu == 'nan': continue
+                        stok_kodu = temiz_kod(teklif.get('Stok Kodu', ''))
+                        barkod_teklif = temiz_kod(teklif.get('Barkod', ''))
                         
-                        eslesen_urun = urunler_df[urunler_stok_temiz == stok_kodu]
+                        # Hem stok kodu hem barkod boşsa satırı atla
+                        if not stok_kodu and not barkod_teklif: continue
+                        
+                        eslesen_urun = pd.DataFrame()
+                        
+                        # 1. Deneme: Önce Stok Kodundan Bulmaya Çalış
+                        if stok_kodu:
+                            eslesen_urun = urunler_df[urunler_stok_temiz == stok_kodu]
+                            
+                        # 2. Deneme: Stok kodundan bulamadıysa Barkoddan Bulmaya Çalış (Güvenlik Ağı)
+                        if eslesen_urun.empty and barkod_teklif:
+                            eslesen_urun = urunler_df[urunler_barkod_temiz == barkod_teklif]
+                        
+                        # İkisinden de bulamadıysa pas geç
                         if eslesen_urun.empty: continue
                         
                         u = eslesen_urun.iloc[0]
@@ -246,7 +290,12 @@ if urunler_df is not None:
                         alis = sayisal_yap(u.get('Alış Fiyatı', 0))
                         kdv = sayisal_yap(u.get('KDV Oranı', 20))
                         
-                        satir = {"Stok Kodu": stok_kodu, "Ürün Adı": u['Ürün Adı']}
+                        satir = {
+                            "Barkod": barkod_teklif if barkod_teklif else u.get('Barkod', ''),
+                            "Stok Kodu": stok_kodu if stok_kodu else u.get('Stok Kodu', ''), 
+                            "Ürün Adı": u['Ürün Adı']
+                        }
+                        
                         teklif_gecerli_mi = False
                         
                         for i in range(1, 4):
@@ -273,7 +322,7 @@ if urunler_df is not None:
                         with pd.ExcelWriter(buf, engine='xlsxwriter') as wr: df_analiz.to_excel(wr, index=False, sheet_name='Kampanya_Karari')
                         st.download_button("📥 Onay/Red Listesini Excel İndir", data=buf.getvalue(), file_name="Trendyol_Kampanya_Kararlari.xlsx")
                     else:
-                        st.error("❌ Eşleşen ürün veya fiyatı 0'dan büyük teklif bulunamadı! Lütfen iki sekmedeki 'Stok Kodu' değerlerinin tam olarak aynı yazıldığından emin ol.")
+                        st.error("❌ Eşleşen ürün veya geçerli teklif bulunamadı! Lütfen Stok Kodu veya Barkod değerlerini kontrol edin.")
 
     elif menu == "⚙️ Veritabanı":
         st.subheader("⚙️ Veritabanı Görüntüleyici")
