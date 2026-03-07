@@ -43,7 +43,6 @@ def excel_oku(file):
         else:
             return pd.DataFrame(columns=default_cols)
 
-    # Urunler sekmesine 'Min Satış Fiyatı' eklendi!
     urunler = sekme_getir("Urunler", ["Stok Kodu", "Barkod", "Marka", "Ürün Adı", "Alış Fiyatı", "KDV Oranı", "Desi", "Kategori", "Rakip Fiyatı", "Min Satış Fiyatı"])
     kargo = sekme_getir("Kargo_Fiyatlari", ["Pazaryeri Adı", "Min Desi", "Max Desi", "Kargo Ücreti"])
     genel_kurallar = sekme_getir("Pazaryeri_Kurallari", ["Pazaryeri Adı", "Komisyon Oranı", "Stopaj Oranı", "Platform Hizmet Bedeli", "İşlem Gideri", "Diğer Giderler", "Barem 1 Sınırı (TL)", "Barem 1 Kargo (TL)", "Barem 2 Sınırı (TL)", "Barem 2 Kargo (TL)", "Ücretsiz Kargo Sınırı (TL)"])
@@ -54,7 +53,7 @@ def excel_oku(file):
 
 # --- YAN MENÜ VE DOSYA YÜKLEME ---
 st.sidebar.title("🐾 bikosumama ERP")
-st.sidebar.markdown("Sürüm 6.0 (Firma Taban Fiyat Koruması)")
+st.sidebar.markdown("Sürüm 6.1 (Kusursuz Kategori Eşleştirme)")
 
 uploaded_file = st.sidebar.file_uploader("📂 Veritabanı Excel'ini Yükle", type=["xlsx", "xls"])
 
@@ -123,13 +122,11 @@ def fiyat_hesapla_v5(marka, kategori, desi, alis, kdv, pz_adi, kar_yuzdesi, min_
     s_hedef, k_hedef, kg_hedef, b_isim = bul_hedef()
     gerceklesecek_kar_yuzdesi = kar_yuzdesi
 
-    # 🛑 FİRMA TABAN FİYAT KURALI KONTROLÜ
     if min_fiyat > 0 and s_hedef < min_fiyat:
         s_hedef = min_fiyat
         b_isim = "Desi"
         kg_hedef = kargo_ucreti_desi
         
-        # Taban fiyata çıkınca kargo baremi değişiyor mu kontrol edelim
         if b1_s > 0 and s_hedef <= b1_s: 
             kg_hedef = b1_k; b_isim = "1. Barem"
         elif b2_s > 0 and s_hedef <= b2_s: 
@@ -212,10 +209,10 @@ if menu == "📈 Dashboard":
     col1.metric("📦 Toplam Ürün Sayısı", len(urunler_df[urunler_df['Stok Kodu'] != '']))
     col2.metric("🏪 Aktif Pazaryeri", len(genel_df[genel_df['Pazaryeri Adı'] != '']))
     
-    kategoriler = urunler_df[urunler_df['Kategori'] != '']['Kategori'].nunique()
-    markalar = urunler_df[urunler_df['Marka'] != '']['Marka'].nunique()
-    col3.metric("📁 Kategori Sayısı", kategoriler)
-    col4.metric("🌟 Marka Sayısı", markalar)
+    kategoriler_sayisi = urunler_df[urunler_df['Kategori'] != '']['Kategori'].nunique()
+    markalar_sayisi = urunler_df[urunler_df['Marka'] != '']['Marka'].nunique()
+    col3.metric("📁 Kategori Sayısı", kategoriler_sayisi)
+    col4.metric("🌟 Marka Sayısı", markalar_sayisi)
     
     st.markdown("---")
     
@@ -280,7 +277,6 @@ elif menu == "🔍 Ürün Arama & Analiz":
                         "Kural Kaynağı": kay
                     })
             
-            # Tabloyu renklendir (Firm taban fiyatı devreye girdiyse kaynağı kırmızı/kalın yap)
             def kural_renk(val):
                 if isinstance(val, str) and '🚨 Firm.' in val: return 'color: red; font-weight: bold;'
                 return ''
@@ -350,7 +346,10 @@ elif menu == "📊 Toplu Liste":
         global_kar = st.number_input("Global Hedef Kar Marjı (%)", min_value=0.0, max_value=100.0, step=0.5, key="global_kar_hafiza")
     else:
         st.markdown("**Aşağıdan kategorilerinize özel kâr marjlarını belirleyin:**")
-        kategoriler = [k for k in urunler_df['Kategori'].unique() if str(k).strip() != '']
+        
+        # Hata Çözümü: Kategorileri çekerken tüm metinleri tam temizliyoruz
+        kategoriler = sorted(list(set([str(k).strip() for k in urunler_df['Kategori'].unique() if str(k).strip() != ''])))
+        
         for i in range(0, len(kategoriler), 4):
             cols = st.columns(4)
             for j in range(4):
@@ -370,8 +369,10 @@ elif menu == "📊 Toplu Liste":
             toplu_data = []
             for _, urun in urunler_df.iterrows():
                 if str(urun['Ürün Adı']).strip() == '': continue
-                if kar_modu == "🌍 Tüm Ürünlere Aynı Kar Marjını Uygula": aktif_kar = global_kar
+                if kar_modu == "🌍 Tüm Ürünlere Aynı Kar Marjını Uygula": 
+                    aktif_kar = global_kar
                 else:
+                    # Eşleştirme yaparken ürünün kategorisini de tamamen temizliyoruz ki mükemmel eşleşsin
                     kat_ismi = str(urun.get('Kategori', '')).strip()
                     aktif_kar = kategori_karlari.get(kat_ismi, varsayilan_kar)
 
@@ -451,7 +452,6 @@ elif menu == "🎯 Ty Kampanya Simülatörü":
                             teklif_gecerli_mi = True
                             kar_tl, kar_yuzde = kampanya_analiz_motoru(desi, alis, kdv, t_fiyat, t_komisyon)
                             
-                            # EĞER FİRMA TABAN FİYATI VARSA VE KAMPANYA FİYATI BUNUN ALTINDAYSA DİREKT REDDET
                             if firma_min_fiyat > 0 and t_fiyat < firma_min_fiyat:
                                 satir[f"Teklif {i}"] = f"❌ RED (FİRMA KURALI İHLALİ)"
                             elif kar_yuzde >= min_kar_hedefi: 
