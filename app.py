@@ -53,7 +53,7 @@ def excel_oku(file):
 
 # --- YAN MENÜ VE DOSYA YÜKLEME ---
 st.sidebar.title("🐾 bikosumama ERP")
-st.sidebar.markdown("Sürüm 6.1 (Kusursuz Kategori Eşleştirme)")
+st.sidebar.markdown("Sürüm 7.0 (Psikolojik Fiyat & Akıllı Eşleştirme)")
 
 uploaded_file = st.sidebar.file_uploader("📂 Veritabanı Excel'ini Yükle", type=["xlsx", "xls"])
 
@@ -109,45 +109,54 @@ def fiyat_hesapla_v5(marka, kategori, desi, alis, kdv, pz_adi, kar_yuzdesi, min_
     u_sinir = sayisal_yap(genel_k.get('Ücretsiz Kargo Sınırı (TL)', 0))
 
     def bul_hedef():
-        s1, k1 = matematik(b1_k)
-        if b1_s > 0 and s1 <= b1_s: return s1, k1, b1_k, "1. Barem"
-        s2, k2 = matematik(b2_k)
-        if b2_s > 0 and s2 <= b2_s: return s2, k2, b2_k, "2. Barem"
+        s1, _ = matematik(b1_k)
+        if b1_s > 0 and s1 <= b1_s: return s1
+        s2, _ = matematik(b2_k)
+        if b2_s > 0 and s2 <= b2_s: return s2
         if u_sinir > 0:
-            s_u, k_u = matematik(0)
-            if s_u < u_sinir: return s_u, k_u, 0, "Alıcı Öder"
-        s_d, k_d = matematik(kargo_ucreti_desi)
-        return s_d, k_d, kargo_ucreti_desi, "Desi"
+            s_u, _ = matematik(0)
+            if s_u < u_sinir: return s_u
+        s_d, _ = matematik(kargo_ucreti_desi)
+        return s_d
 
-    s_hedef, k_hedef, kg_hedef, b_isim = bul_hedef()
-    gerceklesecek_kar_yuzdesi = kar_yuzdesi
+    # 1. Ham Satış Fiyatını Bul
+    s_ham = bul_hedef()
 
-    if min_fiyat > 0 and s_hedef < min_fiyat:
-        s_hedef = min_fiyat
-        b_isim = "Desi"
-        kg_hedef = kargo_ucreti_desi
-        
-        if b1_s > 0 and s_hedef <= b1_s: 
-            kg_hedef = b1_k; b_isim = "1. Barem"
-        elif b2_s > 0 and s_hedef <= b2_s: 
-            kg_hedef = b2_k; b_isim = "2. Barem"
-        elif u_sinir > 0 and s_hedef < u_sinir: 
-            kg_hedef = 0; b_isim = "Alıcı Öder"
-            
-        kom_t = s_hedef * komisyon_oran
-        stp_t = s_hedef * efektif_stopaj
-        tm = alis + kg_hedef + islem + diger + hizmet + kom_t + stp_t
-        k_hedef = s_hedef - tm
-        
-        taban = alis + kg_hedef + islem + diger + hizmet
-        gerceklesecek_kar_yuzdesi = (k_hedef / taban) * 100 if taban > 0 else 0
-        kaynak = "🚨 Firm. Min. Fiyat Kuralı"
+    # 2. PSİKOLOJİK YUVARLAMA (Örn: 142.37 -> 142.90)
+    tam_kisim = int(s_ham)
+    ondalik = s_ham - tam_kisim
+    s_yuvarlanmis = tam_kisim + 0.90 if ondalik <= 0.90 else tam_kisim + 1.90
 
-    kom_tutar = s_hedef * komisyon_oran
-    stp_tutar = s_hedef * efektif_stopaj
+    # 3. FİRMA TABAN FİYAT KONTROLÜ (Eğer firma fiyatı daha yüksekse yuvarlama iptal olur, firma fiyatı geçerli olur)
+    if min_fiyat > 0 and s_yuvarlanmis < min_fiyat:
+        s_son = min_fiyat
+        kaynak_son = "🚨 Firm. Min. Fiyat Kuralı"
+    else:
+        s_son = s_yuvarlanmis
+        kaynak_son = kaynak
 
-    return s_hedef, k_hedef, kg_hedef, kom_tutar, stp_tutar, hizmet, islem, diger, komisyon, b_isim, kaynak, gerceklesecek_kar_yuzdesi
+    # 4. YENİ FİYATA GÖRE KARGO BAREMİNİ VE KESİNTİLERİ YENİDEN HESAPLA
+    kg_son = kargo_ucreti_desi
+    b_isim_son = "Desi"
+    if b1_s > 0 and s_son <= b1_s: 
+        kg_son = b1_k; b_isim_son = "1. Barem"
+    elif b2_s > 0 and s_son <= b2_s: 
+        kg_son = b2_k; b_isim_son = "2. Barem"
+    elif u_sinir > 0 and s_son < u_sinir: 
+        kg_son = 0; b_isim_son = "Alıcı Öder"
 
+    kom_tutar = s_son * komisyon_oran
+    stp_tutar = s_son * efektif_stopaj
+    
+    toplam_maliyet = alis + kg_son + islem + diger + hizmet + kom_tutar + stp_tutar
+    k_son = s_son - toplam_maliyet
+    
+    taban_maliyet = alis + kg_son + islem + diger + hizmet
+    gerceklesecek_kar_yuzdesi = (k_son / taban_maliyet) * 100 if taban_maliyet > 0 else 0
+
+    return s_son, k_son, kg_son, kom_tutar, stp_tutar, hizmet, islem, diger, komisyon, b_isim_son, kaynak_son, gerceklesecek_kar_yuzdesi
+
+# Kampanya motorunda SIFIR YUVARLAMA (Çünkü fiyatı biz değil platform belirliyor)
 def kampanya_analiz_motoru(desi, alis, kdv, teklif_fiyat, teklif_komisyon, pz_adi="Trendyol"):
     kargo_ucreti = 0
     pz_kargo = kargo_df[kargo_df['Pazaryeri Adı'].astype(str).str.strip().str.lower() == pz_adi.lower()]
@@ -253,13 +262,13 @@ elif menu == "🔍 Ürün Arama & Analiz":
         if len(event.selection.rows) > 0:
             u = filtrelenmis_df.iloc[event.selection.rows[0]]
             
-            st.markdown("### 💰 Kâr Marjı Hedefi ile Satış Fiyatı Bulma")
+            st.markdown("### 💰 Kâr Marjı Hedefi ile Satış Fiyatı Bulma (Yuvarlamalı)")
             if "arama_hedef_kar" not in st.session_state: st.session_state.arama_hedef_kar = 20.0
             kar = st.number_input("Hedef Net Kar Marjı (%)", min_value=0.0, step=0.5, key="arama_hedef_kar")
             
             firma_min_fiyat = sayisal_yap(u.get('Min Satış Fiyatı', 0))
             if firma_min_fiyat > 0:
-                st.warning(f"⚠️ **DİKKAT:** Bu ürün için firma taban fiyatı **{firma_min_fiyat} TL** olarak belirlenmiş. Sistem fiyatın bu rakamın altına düşmesine izin vermeyecektir.")
+                st.warning(f"⚠️ **DİKKAT:** Bu ürün için firma taban fiyatı **{firma_min_fiyat} TL** olarak belirlenmiş.")
 
             analiz_data = []
             for pz in genel_df['Pazaryeri Adı'].unique():
@@ -346,10 +355,7 @@ elif menu == "📊 Toplu Liste":
         global_kar = st.number_input("Global Hedef Kar Marjı (%)", min_value=0.0, max_value=100.0, step=0.5, key="global_kar_hafiza")
     else:
         st.markdown("**Aşağıdan kategorilerinize özel kâr marjlarını belirleyin:**")
-        
-        # Hata Çözümü: Kategorileri çekerken tüm metinleri tam temizliyoruz
         kategoriler = sorted(list(set([str(k).strip() for k in urunler_df['Kategori'].unique() if str(k).strip() != ''])))
-        
         for i in range(0, len(kategoriler), 4):
             cols = st.columns(4)
             for j in range(4):
@@ -372,7 +378,6 @@ elif menu == "📊 Toplu Liste":
                 if kar_modu == "🌍 Tüm Ürünlere Aynı Kar Marjını Uygula": 
                     aktif_kar = global_kar
                 else:
-                    # Eşleştirme yaparken ürünün kategorisini de tamamen temizliyoruz ki mükemmel eşleşsin
                     kat_ismi = str(urun.get('Kategori', '')).strip()
                     aktif_kar = kategori_karlari.get(kat_ismi, varsayilan_kar)
 
